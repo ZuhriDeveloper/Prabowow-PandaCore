@@ -23,6 +23,7 @@
 #include "Opcodes.h"
 #include "OutdoorPvPMgr.h"
 #include "Player.h"
+#include "WorldSession.h"
 #include "SharedDefines.h"
 #include "SpellAuraEffects.h"
 #include "TargetedMovementGenerator.h"
@@ -3421,6 +3422,19 @@ bool WorldObject::IsPhased(WorldObject const* obj) const
         if (CreatureTemplate const* info = creature->GetCreatureTemplate())
             if (info->flags_extra & CREATURE_FLAG_EXTRA_ALL_PHASES)
                 return true;
+
+    // Socket bots do not share real players' quest/aura phase conditions.
+    // Without this they vanish in the open world until invited (party sync) or GM.
+    if (obj && GetTypeId() == TypeID::TYPEID_PLAYER && obj->GetTypeId() == TypeID::TYPEID_PLAYER)
+    {
+        auto isBot = [](WorldObject const* o) -> bool
+        {
+            Player const* p = o->ToPlayer();
+            return p && p->GetSession() && p->GetSession()->IsBot();
+        };
+        if (isBot(this) || isBot(obj))
+            return true;
+    }
 
     // PhaseId 169 is the default fallback phase
     if (_phases.empty() && obj->GetPhases().empty())

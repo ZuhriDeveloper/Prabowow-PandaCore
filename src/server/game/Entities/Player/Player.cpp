@@ -1243,7 +1243,9 @@ void Player::HandleDrowning(uint32 time_diff)
                 m_MirrorTimer[BREATH_TIMER] += 1 * IN_MILLISECONDS;
                 // Calculate and deal damage
                 /// @todo Check this formula
-                uint32 damage = GetMaxHealth() / 5 + std::rand() % (getLevel() - 1);
+                // getLevel()-1 is 0 at level 1 -> modulo-by-zero crash (bots often start at 1).
+                uint32 const levelSpread = getLevel() > 1 ? (getLevel() - 1) : 1;
+                uint32 damage = GetMaxHealth() / 5 + uint32(std::rand() % levelSpread);
                 EnvironmentalDamage(DAMAGE_DROWNING, damage);
             }
             else if (!(m_MirrorTimerFlagsLast & UNDERWATER_INWATER))      // Update time in client if need
@@ -1279,7 +1281,8 @@ void Player::HandleDrowning(uint32 time_diff)
                 m_MirrorTimer[FATIGUE_TIMER] += 1 * IN_MILLISECONDS;
                 if (IsAlive())                                            // Calculate and deal damage
                 {
-                    uint32 damage = GetMaxHealth() / 5 + std::rand() % (getLevel() - 1);
+                    uint32 const levelSpread = getLevel() > 1 ? (getLevel() - 1) : 1;
+                    uint32 damage = GetMaxHealth() / 5 + uint32(std::rand() % levelSpread);
                     EnvironmentalDamage(DAMAGE_EXHAUSTED, damage);
                 }
                 else if (HasFlag(PLAYER_FIELD_PLAYER_FLAGS, PLAYER_FLAGS_GHOST))       // Teleport ghost to graveyard
@@ -1747,6 +1750,9 @@ void Player::Update(uint32 p_time)
     //because we don't want player's ghost teleported from graveyard
     if (IsHasDelayedTeleport() && IsAlive())
         TeleportTo(m_teleport_dest, m_teleport_options);
+
+    // Per-tick script hook (used by the playerbots module to drive bot AI).
+    sScriptMgr->OnPlayerUpdate(this, p_time);
 }
 
 void Player::setDeathState(DeathState s)
@@ -3302,6 +3308,25 @@ void Player::GiveLevel(uint8 level)
             learnSpell(750, true); // Plate Armor
 
     sScriptMgr->OnPlayerLevelChanged(this, oldLevel);
+}
+
+void Player::LearnSpecialization(uint32 specializationId)
+{
+    if (!specializationId)
+        return;
+
+    SetTalentSpecialization(GetActiveSpec(), specializationId);
+    SetUInt32Value(PLAYER_FIELD_CURRENT_SPEC_ID, specializationId);
+    UpdateTalentSpecializationManaBonus();
+
+    // Learn every spell this spec grants up to the current level (mirrors the
+    // in-game specialization-selection handler).
+    std::list<uint32> learnList = GetSpellsForLevels(0, getRaceMask(), specializationId, 0, getLevel());
+    for (std::list<uint32>::const_iterator iter = learnList.begin(); iter != learnList.end(); ++iter)
+        if (!HasSpell(*iter))
+            learnSpell(*iter, true);
+
+    SendTalentsInfoData();
 }
 
 void Player::InitTalentForLevel()
@@ -18561,8 +18586,17 @@ bool Player::IsAlwaysDetectableFor(WorldObject const* seer) const
         return true;
 
     if (const Player* seerPlayer = seer->ToPlayer())
+    {
+        // Socket bots are invisible until invited because party members use this
+        // path (IsGroupVisibleFor). Treat bots as always detectable for real
+        // players so open-world visibility matches pre-regression behaviour.
+        if (GetSession() && GetSession()->IsBot()
+            && seerPlayer->GetSession() && !seerPlayer->GetSession()->IsBot())
+            return true;
+
         if (IsGroupVisibleFor(seerPlayer))
             return !(seerPlayer->duel && seerPlayer->duel->startTime != 0 && seerPlayer->duel->opponent == this);
+    }
 
     return false;
 }
@@ -22408,6 +22442,11 @@ void Player::ResetTimeSync()
 
 void Player::SendTimeSync()
 {
+    // Bots have no game client to answer time-sync requests; skip entirely so
+    // the anti-cheat timeout never triggers for them.
+    if (GetSession() && GetSession()->IsBot())
+        return;
+
     m_timeSyncQueue.push(m_movementCounter++);
 
     WorldPacket data(SMSG_TIME_SYNC_REQUEST, 4);

@@ -103,6 +103,7 @@ WorldSession::WorldSession(uint32 id, WorldSocket* sock, AccountTypes sec, uint8
     m_playerLogout(false),
     m_playerRecentlyLogout(false),
     m_playerSave(false),
+    m_isBot(false),
     m_sessionDbcLocale(sWorld->GetAvailableDbcLocale(locale)),
     m_sessionDbLocaleIndex(locale),
     m_latency(0),
@@ -306,7 +307,7 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
 
     ///- Before we process anything:
     /// If necessary, kick the player from the character select screen
-    if (IsConnectionIdle())
+    if (m_Socket && IsConnectionIdle())
         m_Socket->CloseSocket();
 
     ///- Retrieve packets from the receive queue and call the appropriate handlers
@@ -568,8 +569,24 @@ void WorldSession::LogoutPlayer(bool save)
 
         // remove player from the group if he is:
         // a) in group; b) not in raid group; c) logging out normally (not being kicked or disconnected)
+        // Keep party membership when any member is a playerbot - bots stay online and
+        // the real player should remain an offline slot (same as raid logout).
         if (_player->GetGroup() && !_player->GetGroup()->isRaidGroup() && m_Socket)
-            _player->RemoveFromGroup();
+        {
+            bool groupHasBot = false;
+            Group* group = _player->GetGroup();
+            for (GroupReference* itr = group->GetFirstMember(); itr; itr = itr->next())
+            {
+                Player* member = itr->GetSource();
+                if (member && member->GetSession() && member->GetSession()->IsBot())
+                {
+                    groupHasBot = true;
+                    break;
+                }
+            }
+            if (!groupHasBot)
+                _player->RemoveFromGroup();
+        }
 
         //! Send update to group and reset stored max enchanting level
         if (_player->GetGroup())

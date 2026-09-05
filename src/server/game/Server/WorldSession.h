@@ -303,6 +303,39 @@ public:
     void SetPlayer(Player* player);
     uint8 Expansion() const { return m_expansion; }
 
+    // Playerbots: a bot session has no network socket and is not tracked in
+    // World::m_sessions; it is owned and updated by the playerbots module.
+    void SetBot(bool on) { m_isBot = on; }
+    bool IsBot() const { return m_isBot; }
+
+    // Async bot login (DB on worker thread). Prefer this for mass pool logins -
+    // PollBotCharacterLogin from PlayerbotMgr each tick; do not spin-wait.
+    bool BeginBotCharacterLogin(uint64 playerGuid);
+    enum class BotLoginPollStatus : uint8
+    {
+        Pending = 0,
+        Success = 1,
+        Failed = 2
+    };
+    // When discard is true, frees a ready query holder without LoadFromDB.
+    BotLoginPollStatus PollBotCharacterLogin(bool discard = false);
+
+    // Synchronously loads a character (Begin + wait + Poll). Prefer for single
+    // bots (.playerbots add / create init); random pool uses the async path.
+    bool LoginBotCharacter(uint64 playerGuid);
+    // Completes a pending near/far teleport immediately. Bots have no client to
+    // send the teleport ack, so the module calls this after Player::TeleportTo.
+    // Returns true if a teleport was finalized.
+    bool FinalizeBotTeleport();
+    // Creates a character on this session's account and saves it to the DB.
+    // Used by the playerbots module to auto-populate bot characters. When
+    // specializationId is non-zero and the level allows it, the character is
+    // given that specialization and its spells. Returns the new character's low
+    // GUID, or 0 on failure.
+    uint32 CreateBotCharacter(std::string const& name, uint8 race, uint8 cls, uint8 gender,
+        uint8 skin, uint8 face, uint8 hairStyle, uint8 hairColor, uint8 facialHair, uint8 level,
+        uint32 specializationId = 0);
+
     void InitWarden(SessionKey const&, std::string const& os);
 
     /// Session in auth.queue currently
@@ -1210,6 +1243,7 @@ private:
     bool m_playerLogout;                                // code processed in LogoutPlayer
     bool m_playerRecentlyLogout;
     bool m_playerSave;
+    bool m_isBot;                                       // socketless session owned by the playerbots module
     LocaleConstant m_sessionDbcLocale;
     LocaleConstant m_sessionDbLocaleIndex;
     uint32 m_latency;

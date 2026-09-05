@@ -59,7 +59,8 @@ namespace
 Group::Group() : m_leaderGuid(0), m_leaderName(""), m_groupType(GROUPTYPE_NORMAL),
 m_dungeonDifficulty(DIFFICULTY_NORMAL), m_raidDifficulty(DIFFICULTY_10MAN_NORMAL),
 m_bgGroup(NULL), m_bfGroup(NULL), m_lootMethod(LootMethod::FREE_FOR_ALL), m_lootThreshold(ITEM_QUALITY_UNCOMMON), m_looterGuid(0),
-m_subGroupsCounts(NULL), m_guid(0), m_counter(0), m_maxEnchantingLevel(0), m_dbStoreId(0), _readyCheckInProgress(false)
+m_subGroupsCounts(NULL), m_guid(0), m_counter(0), m_maxEnchantingLevel(0), m_dbStoreId(0), _readyCheckInProgress(false),
+m_isDisbanding(false)
 {
     for (uint8 i = 0; i < TARGETICONCOUNT; ++i)
         m_targetIcons[i] = 0;
@@ -527,7 +528,12 @@ bool Group::RemoveMember(uint64 guid, const RemoveMethod& method /*= GROUP_REMOV
     // remove member and change leader (if need) only if strong more 2 members _before_ member remove (BG/BF allow 1 member group)
     if (GetMembersCount() > ((isBGGroup() || isLFGGroup() || isBFGroup()) ? 1u : 2u))
     {
-        Player* player = ObjectAccessor::FindPlayer(guid);
+        // LFG scripts (OnGroupRemoveMember above) may far-teleport the leaver out of the
+        // instance, which removes them from the world. FindPlayer() ignores out-of-world
+        // players, so use the in-or-out-of-world lookup to still clear their group pointer
+        // and update their client; otherwise m_group dangles (logout crash) and the client
+        // stays stuck showing the old party.
+        Player* player = ObjectAccessor::FindPlayerInOrOutOfWorld(guid);
         if (player)
         {
             // Battleground group handling
@@ -715,6 +721,13 @@ void Group::ChangeLeader(uint64 newLeaderGuid)
 
 void Group::Disband(bool hideDestroy /* = false */)
 {
+    // Leaving an LFG dungeon teleports remaining members out during OnDisband.
+    // Bot FinalizeBotTeleport -> OnMapChanged would otherwise call Disband again
+    // on this same object (use-after-free / double-delete).
+    if (m_isDisbanding)
+        return;
+    m_isDisbanding = true;
+
     bool const wasLFGGroup = isLFGGroup();
     uint64 const lfgGroupGuid = wasLFGGroup ? GetGUID() : 0;
     uint8 const lfgQueueId = wasLFGGroup ? sLFGMgr->GetQueueId(lfgGroupGuid) : 0;
@@ -1706,6 +1719,13 @@ void Group::SetTargetIcon(uint8 id, ObjectGuid whoGuid, ObjectGuid targetGuid, u
     data.WriteGuidBytes(whoGuid, 4, 2, 7);
 
     BroadcastPacket(&data, true);
+}
+
+uint64 Group::GetTargetIcon(uint8 id) const
+{
+    if (id >= TARGETICONCOUNT)
+        return 0;
+    return m_targetIcons[id];
 }
 
 void Group::SendTargetIconList(WorldSession* session)
