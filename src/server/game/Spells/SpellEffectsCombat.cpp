@@ -143,21 +143,25 @@ void Spell::EffectSchoolDMG(SpellEffIndex effIndex)
     if (unitTarget && unitTarget->IsAlive())
     {
         bool apply_direct_bonus = true;
+
+        // Meteor like spells (divided damage to targets). Monk Fists of Fury spreads a
+        // tick over everyone it hits in the same way, so this cannot live inside the
+        // SPELLFAMILY_GENERIC case any more.
+        if (m_spellInfo->AttributesCu & SPELL_ATTR0_CU_SHARE_DAMAGE)
+        {
+            uint32 count = 0;
+            for (std::list<TargetInfo>::iterator ihit = m_UniqueTargetInfo.begin(); ihit != m_UniqueTargetInfo.end(); ++ihit)
+                if (ihit->effectMask & (1 << effIndex))
+                    ++count;
+
+            if (count)
+                damage /= count;                        // divide to all targets
+        }
+
         switch (m_spellInfo->SpellFamilyName)
         {
             case SPELLFAMILY_GENERIC:
             {
-                // Meteor like spells (divided damage to targets)
-                if (m_spellInfo->AttributesCu & SPELL_ATTR0_CU_SHARE_DAMAGE)
-                {
-                    uint32 count = 0;
-                    for (std::list<TargetInfo>::iterator ihit = m_UniqueTargetInfo.begin(); ihit != m_UniqueTargetInfo.end(); ++ihit)
-                        if (ihit->effectMask & (1 << effIndex))
-                            ++count;
-
-                    damage /= count;                    // divide to all targets
-                }
-
                 switch (Skyfire::Spells::GetGenericSchoolDamageRule(m_spellInfo->Id))
                 {
                     case Skyfire::Spells::GENERIC_SCHOOL_DAMAGE_CONSUMPTION:

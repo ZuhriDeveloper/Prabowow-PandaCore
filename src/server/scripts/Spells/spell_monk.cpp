@@ -84,6 +84,36 @@ enum MonkSpells
     SPELL_MONK_HEALING_SPHERE = 115460,
 };
 
+// A monk melee ability carries a placeholder in its DBC damage effect -- the real
+// number is the weapon formula times the coefficient the client keeps in its tooltip.
+// Returns false for a caster with no equipped weapons to read, which leaves creatures
+// casting a monk ability on whatever the spell data says.
+static bool CalculateMonkMeleeAbilityDamage(Unit* caster, float coefficient, int32& damage)
+{
+    Player* player = caster ? caster->ToPlayer() : NULL;
+    if (!player)
+        return false;
+
+    Skyfire::Spells::Monk::MeleeAbilityDamageData data;
+    data.MainHandDamage = frand(player->GetWeaponDamageRange(WeaponAttackType::BASE_ATTACK, WeaponDamageRange::MINDAMAGE),
+        player->GetWeaponDamageRange(WeaponAttackType::BASE_ATTACK, WeaponDamageRange::MAXDAMAGE));
+    data.MainHandSpeed = float(player->GetAttackTime(WeaponAttackType::BASE_ATTACK)) / IN_MILLISECONDS;
+    data.DualWield = player->haveOffhandWeapon();
+
+    if (data.DualWield)
+    {
+        data.OffHandDamage = frand(player->GetWeaponDamageRange(WeaponAttackType::OFF_ATTACK, WeaponDamageRange::MINDAMAGE),
+            player->GetWeaponDamageRange(WeaponAttackType::OFF_ATTACK, WeaponDamageRange::MAXDAMAGE));
+        data.OffHandSpeed = float(player->GetAttackTime(WeaponAttackType::OFF_ATTACK)) / IN_MILLISECONDS;
+    }
+
+    data.AttackPower = player->GetTotalAttackPowerValue(WeaponAttackType::BASE_ATTACK);
+    data.Brewmaster = player->GetTalentSpecialization(player->GetActiveSpec()) == SPEC_MONK_BREWMASTER;
+
+    damage = int32(Skyfire::Spells::Monk::CalculateMeleeAbilityDamage(data, coefficient));
+    return true;
+}
+
 // 5.4.8 18414
 // 122278 - Dampen Harm
 class spell_monk_dampen_harm : public SpellScriptLoader
@@ -692,6 +722,15 @@ class spell_monk_expel_harm : public SpellScriptLoader
             return true;
         }
 
+        // The tooltip heals for [7 * <low>] and deals half of that nearby, so the
+        // weapon formula belongs on the healing effect.
+        void HandleCalcHealing(SpellEffIndex /*effIndex*/)
+        {
+            int32 healing = 0;
+            if (CalculateMonkMeleeAbilityDamage(GetCaster(), Skyfire::Spells::Monk::EXPEL_HARM_COEFFICIENT, healing))
+                SetEffectValue(healing);
+        }
+
         void DealAreaDamage(SpellEffIndex index)
         {
             if (!GetHitUnit())
@@ -704,6 +743,7 @@ class spell_monk_expel_harm : public SpellScriptLoader
 
         void Register() override
         {
+            OnEffectLaunchTarget += SpellEffectFn(spell_monk_expel_harm_SpellScript::HandleCalcHealing, EFFECT_0, SPELL_EFFECT_HEAL);
             OnEffectHitTarget += SpellEffectFn(spell_monk_expel_harm_SpellScript::DealAreaDamage, EFFECT_0, SPELL_EFFECT_HEAL);
         }
     };
@@ -2976,6 +3016,13 @@ class spell_monk_keg_smash : public SpellScriptLoader
     {
         PrepareSpellScript(spell_monk_keg_smash_SpellScript);
 
+        void HandleCalcDamage(SpellEffIndex /*effIndex*/)
+        {
+            int32 damage = 0;
+            if (CalculateMonkMeleeAbilityDamage(GetCaster(), Skyfire::Spells::Monk::KEG_SMASH_COEFFICIENT, damage))
+                SetEffectValue(damage);
+        }
+
         void HandleOnHit()
         {
             if (Unit* caster = GetCaster())
@@ -2997,6 +3044,7 @@ class spell_monk_keg_smash : public SpellScriptLoader
 
         void Register()
         {
+            OnEffectLaunchTarget += SpellEffectFn(spell_monk_keg_smash_SpellScript::HandleCalcDamage, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
             OnHit += SpellHitFn(spell_monk_keg_smash_SpellScript::HandleOnHit);
         }
     };
@@ -3165,36 +3213,6 @@ enum Blackout
     SPELL_MONK_SHUFFLE = 115307
 };
 
-// A monk melee ability carries a placeholder in its DBC damage effect -- the real
-// number is the weapon formula times the coefficient the client keeps in its tooltip.
-// Returns false for a caster with no equipped weapons to read, which leaves creatures
-// casting a monk ability on whatever the spell data says.
-static bool CalculateMonkMeleeAbilityDamage(Unit* caster, float coefficient, int32& damage)
-{
-    Player* player = caster ? caster->ToPlayer() : NULL;
-    if (!player)
-        return false;
-
-    Skyfire::Spells::Monk::MeleeAbilityDamageData data;
-    data.MainHandDamage = frand(player->GetWeaponDamageRange(WeaponAttackType::BASE_ATTACK, WeaponDamageRange::MINDAMAGE),
-        player->GetWeaponDamageRange(WeaponAttackType::BASE_ATTACK, WeaponDamageRange::MAXDAMAGE));
-    data.MainHandSpeed = float(player->GetAttackTime(WeaponAttackType::BASE_ATTACK)) / IN_MILLISECONDS;
-    data.DualWield = player->haveOffhandWeapon();
-
-    if (data.DualWield)
-    {
-        data.OffHandDamage = frand(player->GetWeaponDamageRange(WeaponAttackType::OFF_ATTACK, WeaponDamageRange::MINDAMAGE),
-            player->GetWeaponDamageRange(WeaponAttackType::OFF_ATTACK, WeaponDamageRange::MAXDAMAGE));
-        data.OffHandSpeed = float(player->GetAttackTime(WeaponAttackType::OFF_ATTACK)) / IN_MILLISECONDS;
-    }
-
-    data.AttackPower = player->GetTotalAttackPowerValue(WeaponAttackType::BASE_ATTACK);
-    data.Brewmaster = player->GetTalentSpecialization(player->GetActiveSpec()) == SPEC_MONK_BREWMASTER;
-
-    damage = int32(Skyfire::Spells::Monk::CalculateMeleeAbilityDamage(data, coefficient));
-    return true;
-}
-
 // Jab - 100780, plus the copies the weapon override auras swap in for it
 class spell_monk_jab : public SpellScriptLoader
 {
@@ -3282,6 +3300,98 @@ class spell_monk_rising_sun_kick : public SpellScriptLoader
     SpellScript* GetSpellScript() const
     {
         return new spell_monk_rising_sun_kick_SpellScript();
+    }
+};
+
+// Spinning Crane Kick - 107270, the spell the channel triggers every 0.75 sec
+class spell_monk_spinning_crane_kick_damage : public SpellScriptLoader
+{
+    public:
+    spell_monk_spinning_crane_kick_damage() : SpellScriptLoader("spell_monk_spinning_crane_kick_damage")
+    { }
+
+    class spell_monk_spinning_crane_kick_damage_SpellScript : public SpellScript
+    {
+        PrepareSpellScript(spell_monk_spinning_crane_kick_damage_SpellScript);
+
+        void HandleCalcDamage(SpellEffIndex /*effIndex*/)
+        {
+            int32 damage = 0;
+            if (CalculateMonkMeleeAbilityDamage(GetCaster(), Skyfire::Spells::Monk::SPINNING_CRANE_KICK_COEFFICIENT, damage))
+                SetEffectValue(damage);
+        }
+
+        void Register()
+        {
+            OnEffectLaunchTarget += SpellEffectFn(spell_monk_spinning_crane_kick_damage_SpellScript::HandleCalcDamage, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
+        }
+    };
+
+    SpellScript* GetSpellScript() const
+    {
+        return new spell_monk_spinning_crane_kick_damage_SpellScript();
+    }
+};
+
+// Rushing Jade Wind - 148187, the spell the talent's tornado triggers every 0.75 sec
+class spell_monk_rushing_jade_wind_damage : public SpellScriptLoader
+{
+    public:
+    spell_monk_rushing_jade_wind_damage() : SpellScriptLoader("spell_monk_rushing_jade_wind_damage")
+    { }
+
+    class spell_monk_rushing_jade_wind_damage_SpellScript : public SpellScript
+    {
+        PrepareSpellScript(spell_monk_rushing_jade_wind_damage_SpellScript);
+
+        void HandleCalcDamage(SpellEffIndex /*effIndex*/)
+        {
+            int32 damage = 0;
+            if (CalculateMonkMeleeAbilityDamage(GetCaster(), Skyfire::Spells::Monk::RUSHING_JADE_WIND_COEFFICIENT, damage))
+                SetEffectValue(damage);
+        }
+
+        void Register()
+        {
+            OnEffectLaunchTarget += SpellEffectFn(spell_monk_rushing_jade_wind_damage_SpellScript::HandleCalcDamage, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
+        }
+    };
+
+    SpellScript* GetSpellScript() const
+    {
+        return new spell_monk_rushing_jade_wind_damage_SpellScript();
+    }
+};
+
+// Fists of Fury - 117418, the spell the channel triggers every second. The tooltip
+// spreads one tick evenly over everyone hit, which SPELL_ATTR0_CU_SHARE_DAMAGE does
+// for us after this hook has filled the full tick in.
+class spell_monk_fists_of_fury_damage : public SpellScriptLoader
+{
+    public:
+    spell_monk_fists_of_fury_damage() : SpellScriptLoader("spell_monk_fists_of_fury_damage")
+    { }
+
+    class spell_monk_fists_of_fury_damage_SpellScript : public SpellScript
+    {
+        PrepareSpellScript(spell_monk_fists_of_fury_damage_SpellScript);
+
+        void HandleCalcDamage(SpellEffIndex /*effIndex*/)
+        {
+            int32 damage = 0;
+            if (CalculateMonkMeleeAbilityDamage(GetCaster(), Skyfire::Spells::Monk::FISTS_OF_FURY_COEFFICIENT, damage))
+                SetEffectValue(damage);
+        }
+
+        void Register()
+        {
+            OnEffectLaunchTarget += SpellEffectFn(spell_monk_fists_of_fury_damage_SpellScript::HandleCalcDamage, EFFECT_0, SPELL_EFFECT_SCHOOL_DAMAGE);
+        }
+    };
+
+    SpellScript* GetSpellScript() const
+    {
+        return new spell_monk_fists_of_fury_damage_SpellScript();
     }
 };
 
@@ -3452,6 +3562,9 @@ void AddSC_monk_spell_scripts()
     new spell_monk_zen_pilgrimage();
     new spell_monk_zen_pilgrimage_return();
     new spell_monk_blackout_kick();
+    new spell_monk_fists_of_fury_damage();
+    new spell_monk_rushing_jade_wind_damage();
+    new spell_monk_spinning_crane_kick_damage();
     new spell_monk_jab();
     new spell_monk_rising_sun_kick();
     new spell_monk_tiger_palm();

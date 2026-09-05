@@ -25,11 +25,33 @@ namespace Monk
     float const TIGER_PALM_COEFFICIENT = 3.0f;
     float const BLACKOUT_KICK_COEFFICIENT = 7.12f;
 
-    // SimulationCraft's mop branch runs Rising Sun Kick 11% under its tooltip
-    // (14.4 * 0.89), a late hotfix Blizzard never wrote back into the spell text.
-    // Blackout Kick's text did get rewritten for that hotfix, which is why its 7.12
-    // already matches. Follow the tooltip here: it is the number players read.
     float const RISING_SUN_KICK_COEFFICIENT = 14.4f;
+
+    // Spinning Crane Kick and Rushing Jade Wind pay their coefficient once per tick,
+    // and the talent inherits the ability it replaces.
+    float const SPINNING_CRANE_KICK_COEFFICIENT = 1.59f;
+    float const RUSHING_JADE_WIND_COEFFICIENT = 1.59f;
+
+    // Fists of Fury pays this per tick and then spreads it over everyone it hits.
+    float const FISTS_OF_FURY_COEFFICIENT = 7.5f;
+
+    float const KEG_SMASH_COEFFICIENT = 10.0f;
+
+    // Expel Harm heals for this much; half of the healing lands as damage nearby.
+    float const EXPEL_HARM_COEFFICIENT = 7.0f;
+
+    // Where SimulationCraft's mop branch disagrees with the 5.4.8 tooltip, the tooltip
+    // wins here -- it is the number players read off their own spellbook:
+    //
+    //   Rising Sun Kick      simc 14.4 * 0.89        tooltip 14.4
+    //   Fists of Fury        simc 7.5 * 0.89         tooltip 7.5
+    //   Spinning Crane Kick  simc 1.75               tooltip 1.59
+    //   Keg Smash            simc 8.12 * 1.5         tooltip 10.0
+    //   Expel Harm           simc 7.0 damage and     tooltip 7.0 healing, half of it
+    //                        twice that in healing           dealt as damage
+    //
+    // The 0.89 is a late Windwalker hotfix Blizzard only wrote back into some of the
+    // spell texts -- Blackout Kick's 7.12 is 8.0 * 0.89 and already carries it.
 
     // Two weapons contribute the off hand at half rate and then lose ~10% of the total,
     // which is what keeps dual wield and a two-hander close to each other.
