@@ -2844,7 +2844,8 @@ void SpellMgr::LoadSpellInfoCustomAttributes()
             case 72373: // Shared Suffering
             case 71904: // Chaos Bane
             case 70492: // Ooze Eruption
-                // ONLY SPELLS WITH SPELLFAMILY_GENERIC and EFFECT_SCHOOL_DAMAGE
+            case 117418: // Fists of Fury (Monk), spreads one tick over its targets
+                // ONLY SPELLS WITH EFFECT_SCHOOL_DAMAGE
                 spellInfo->AttributesCu |= SPELL_ATTR0_CU_SHARE_DAMAGE;
                 break;
             case 18500: // Wing Buffet
