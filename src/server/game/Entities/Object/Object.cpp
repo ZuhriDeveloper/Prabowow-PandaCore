@@ -48,7 +48,7 @@
 // Live splines carry a handful of nodes; even long scripted paths stay well under
 // this. Anything above it is not a real path, so the threshold is high enough that a
 // healthy realm logs nothing at all -- silence here is itself a result.
-uint32 const SPLINE_NODE_COUNT_SANITY_LIMIT = 64;
+int32 const SPLINE_NODE_COUNT_SANITY_LIMIT = 64;
 
 TypeID GuidHigh2TypeId(uint32 guid_hi)
 {
@@ -473,22 +473,16 @@ void Object::BuildMovementUpdate(ByteBuffer* data, uint16 flags) const
         {
             // TEMPORARY DIAGNOSTIC -- remove once the client crash is understood.
             //
-            // WriteCreateBits sends getPath().size() as a 20-bit node count and
-            // WriteCreateData then writes that many x/z/y triples. The client sizes a
-            // stack buffer from that count, so an implausible value there blows its
-            // stack (0xC00000FD) while parsing SMSG_UPDATE_OBJECT. Crash dumps put the
-            // faulting frame in exactly that handler, for creature GUIDs, so log the
-            // count whenever it leaves the plausible range and let the value speak.
+            // WriteCreateBits below sends this count as a 20-bit field and the client
+            // sizes a stack buffer from it, which is where clients die with
+            // 0xC00000FD parsing SMSG_UPDATE_OBJECT. Log it when it stops being
+            // plausible. ERROR level because Logger.root ships at 5.
             //
-            // hasSpline comes from IsSplineEnabled(), which is already
-            // Initialized() && !Finalized() -- so movespline is non-null here and the
-            // path really is the one about to go out on the wire.
-            //
-            // ERROR level on purpose -- Logger.root ships at 5 (error), so anything
-            // quieter would never reach the log without a config change.
-            size_t const splineNodes = self->movespline->getPath().size();
+            // getPath() is protected to PacketBuilder; _Spline() is the public route
+            // to the same control array, so this is the number that gets written.
+            int32 const splineNodes = self->movespline->_Spline().getPointCount();
             if (splineNodes > SPLINE_NODE_COUNT_SANITY_LIMIT)
-                SF_LOG_ERROR("entities.unit", "Spline node count %zu exceeds %u for creature entry %u (guid %u) '%s' at map %u (%.2f, %.2f, %.2f) -- this count is about to be sent to clients.",
+                SF_LOG_ERROR("entities.unit", "Spline node count %d exceeds %d for creature entry %u (guid %u) '%s' at map %u (%.2f, %.2f, %.2f) -- this count is about to be sent to clients.",
                     splineNodes, SPLINE_NODE_COUNT_SANITY_LIMIT, self->GetEntry(), self->GetGUIDLow(), self->GetName().c_str(),
                     self->GetMapId(), self->GetPositionX(), self->GetPositionY(), self->GetPositionZ());
 
