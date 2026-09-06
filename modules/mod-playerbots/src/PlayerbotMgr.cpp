@@ -1020,11 +1020,38 @@ void PlayerbotMgr::SyncNearbyBotVisibility(Player* viewer, uint32 diff)
     }
 }
 
+bool PlayerbotMgr::CanCommandBot(Player const* from, Player const* bot) const
+{
+    if (!from || !bot)
+        return false;
+
+    WorldSession const* fromSession = from->GetSession();
+    WorldSession const* botSession = bot->GetSession();
+    if (!fromSession || !botSession)
+        return false;
+
+    // Never let one bot drive another.
+    if (fromSession->IsBot())
+        return false;
+
+    // GMs keep full control; .playerbots has no follow/attack equivalent, so
+    // without this there would be no way to exercise orders in-game at all.
+    if (!AccountMgr::IsPlayerAccount(fromSession->GetSecurity()))
+        return true;
+
+    return fromSession->GetAccountId() == botSession->GetAccountId();
+}
+
 void PlayerbotMgr::HandleBotWhisper(Player* from, Player* bot, std::string const& msg)
 {
     if (!_enabled || !from || !bot)
         return;
     if (from->GetSession() && from->GetSession()->IsBot())
+        return;
+
+    // Silently ignored rather than answered: a reply would confirm the order
+    // was received and give a whisper-flood a way to spam chat through bots.
+    if (!CanCommandBot(from, bot))
         return;
 
     auto it = _ai.find(bot->GetGUID());
@@ -1081,6 +1108,10 @@ void PlayerbotMgr::HandleBotGroupChat(Player* from, Group* group, std::string co
     auto deliver = [&](Player* member)
     {
         if (!member)
+            return;
+        // Sharing a group is not ownership -- invites are open, so anyone could
+        // otherwise drive a bot they merely invited.
+        if (!CanCommandBot(from, member))
             return;
         auto it = _ai.find(member->GetGUID());
         if (it == _ai.end() || !it->second)

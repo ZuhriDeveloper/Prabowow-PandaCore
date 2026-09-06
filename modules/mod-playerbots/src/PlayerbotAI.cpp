@@ -3829,6 +3829,20 @@ void PlayerbotAI::HandleFollow()
     // very far). Following resumes automatically once we arrive on the map.
     if (leader->GetMap() != _bot->GetMap() || _bot->GetDistance(leader) > BOT_TELEPORT_DIST)
     {
+        // Only the owning account gets the free warp. Invites are open, so
+        // otherwise a stranger could invite a bot, walk through a portal, and
+        // have it follow across the world -- summoning by another name.
+        // Stop following instead; the bot stays where it is.
+        if (!sPlayerbotMgr->CanCommandBot(leader, _bot))
+        {
+            if (_followGuid)
+            {
+                BotMovement::StopAndIdle(_bot);
+                _followGuid = 0;
+            }
+            return;
+        }
+
         TeleportToLeader(leader);
         return;
     }

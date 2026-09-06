@@ -96,6 +96,12 @@ public:
     bool GetQuestAutoPickReward() const { return _questAutoPickReward; }
     bool IsRandomBot(uint64 characterGuid) const { return _randomBots.count(characterGuid) > 0; }
 
+    // True when `from` is allowed to give `bot` orders. A bot obeys only the
+    // account that owns its character, so the RNDBOT* pool answers to nobody:
+    // those bots are world population, not a pet any player can whisper.
+    // GMs bypass so bot behaviour stays testable in-game.
+    bool CanCommandBot(Player const* from, Player const* bot) const;
+
     // Provisions bot accounts (prefix + n) and fills them with characters using
     // the configured faction/role ratios and level range. Incremental: existing
     // accounts/characters are reused. Returns the number of characters
