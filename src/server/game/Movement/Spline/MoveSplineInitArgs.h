@@ -52,6 +52,7 @@ namespace Movement
 
     private:
         bool _checkPathBounds() const;
+        bool _checkPathCoordsSane() const;
     };
 }
 

@@ -6,6 +6,7 @@
 #include "Creature.h"
 #include "Log.h"
 #include "MoveSpline.h"
+#include <cmath>
 #include <sstream>
 
 namespace Movement {
@@ -194,8 +195,31 @@ namespace Movement {
         CHECK(velocity > 0.1f);
         CHECK(time_perc >= 0.f && time_perc <= 1.f);
         //CHECK(_checkPathBounds());
+        CHECK(_checkPathCoordsSane());
         return true;
 #undef CHECK
+    }
+
+    // A control point that is non-finite (inf/nan) or wildly out of range crashes 5.4.8
+    // clients with ERROR #132 / 0xC00000FD: the client resamples the path, divides by a
+    // segment length that has become inf, and sizes a stack buffer from the result,
+    // overflowing its stack while parsing the movement packet. This is independent of
+    // the node count -- crash dumps show it on splines of only ten to twenty nodes.
+    //
+    // Real map coordinates never leave +/-17066.66 (half the 34133.33 world), so this
+    // limit sits far above any legitimate position yet far below the garbage seen in the
+    // dumps (7e5 and up) -- it rejects the corruption without ever clipping real movement.
+    bool MoveSplineInitArgs::_checkPathCoordsSane() const
+    {
+        float const SPLINE_COORD_SANITY_LIMIT = 100000.f;
+        for (Vector3 const& p : path)
+            if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+                std::fabs(p.x) > SPLINE_COORD_SANITY_LIMIT ||
+                std::fabs(p.y) > SPLINE_COORD_SANITY_LIMIT ||
+                std::fabs(p.z) > SPLINE_COORD_SANITY_LIMIT)
+                return false;
+
+        return true;
     }
 
     // MONSTER_MOVE packet format limitation for not CatmullRom movement:
