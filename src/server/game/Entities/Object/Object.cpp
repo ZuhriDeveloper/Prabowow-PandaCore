@@ -42,6 +42,7 @@
 #include "WaypointMovementGenerator.h"
 #include "World.h"
 #include "WorldPacket.h"
+#include <cmath>
 
 // A real creature movement spline has at most a few dozen nodes. Log anything past
 // the first limit so unusual paths stay visible for diagnosis; drop the spline
@@ -51,6 +52,13 @@
 // thousands of nodes it takes to actually overflow, so it never clips real movement.
 int32 const SPLINE_NODE_COUNT_LOG_LIMIT      = 64;
 int32 const SPLINE_NODE_COUNT_SUPPRESS_LIMIT = 1024;
+
+// A control point that is non-finite (inf/nan) or wildly out of range overflows the
+// client's stack the same way (ERROR #132 / 0xC00000FD) while it resamples the path,
+// no matter how few nodes the spline has -- so the node-count guard above cannot catch
+// it. Real coordinates never leave +/-17066.66 (half the 34133.33 world), so this limit
+// clears any legitimate position yet sits far below the garbage in crash dumps (7e5+).
+float const SPLINE_COORD_SANITY_LIMIT = 100000.f;
 
 TypeID GuidHigh2TypeId(uint32 guid_hi)
 {
@@ -432,7 +440,8 @@ void Object::BuildMovementUpdate(ByteBuffer* data, uint16 flags) const
         // so read the same array through the public _Spline(). ERROR level: root is 5.
         if (hasSpline)
         {
-            int32 const splineNodes = self->movespline->_Spline().getPointCount();
+            auto const& spline = self->movespline->_Spline();
+            int32 const splineNodes = spline.getPointCount();
             if (splineNodes > SPLINE_NODE_COUNT_LOG_LIMIT)
                 SF_LOG_ERROR("entities.unit", "Spline node count %d for creature entry %u (guid %u) '%s' at map %u (%.2f, %.2f, %.2f)%s.",
                     splineNodes, self->GetEntry(), self->GetGUIDLow(), self->GetName().c_str(),
@@ -441,6 +450,26 @@ void Object::BuildMovementUpdate(ByteBuffer* data, uint16 flags) const
 
             if (splineNodes > SPLINE_NODE_COUNT_SUPPRESS_LIMIT)
                 hasSpline = false;
+
+            // Even a short spline crashes clients if a control point is non-finite or
+            // wildly out of range: the client divides by an infinite segment length and
+            // overflows its stack (0xC00000FD) sizing the resample buffer. Validate()
+            // already rejects such paths at launch, but a value can still go bad after
+            // that, so drop the spline from the update here too -- the creature simply
+            // isn't animated for this one packet.
+            for (int32 i = 0; hasSpline && i < splineNodes; ++i)
+            {
+                auto const& p = spline.getPoint(i);
+                if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+                    std::fabs(p.x) > SPLINE_COORD_SANITY_LIMIT ||
+                    std::fabs(p.y) > SPLINE_COORD_SANITY_LIMIT ||
+                    std::fabs(p.z) > SPLINE_COORD_SANITY_LIMIT)
+                {
+                    SF_LOG_ERROR("entities.unit", "Spline point %d (%.2f, %.2f, %.2f) for creature entry %u (guid %u) '%s' at map %u -- suppressed, would overflow the client stack.",
+                        i, p.x, p.y, p.z, self->GetEntry(), self->GetGUIDLow(), self->GetName().c_str(), self->GetMapId());
+                    hasSpline = false;
+                }
+            }
         }
         hasPitch = self->HasUnitMovementFlag(MovementFlags(MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING)) || self->HasExtraUnitMovementFlag(MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING);
         hasSplineElevation = self->HasUnitMovementFlag(MOVEMENTFLAG_SPLINE_ELEVATION);
