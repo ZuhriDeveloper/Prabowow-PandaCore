@@ -1,12 +1,13 @@
 -- Mount Hyjal: bikin emissary Cenarion memindahkan pemain lagi.
 --
 -- Latar belakang
---   Rantai Hyjal dimulai dari papan "Hero's Call: Mount Hyjal!" (quest 27726,
---   Horde 29386) yang menyuruh pemain menemui Cenarion Emissary Jademoon di
---   Stormwind Keep (entry 15187) atau Cenarion Emissary Blackhoof di Orgrimmar
---   (15188). Emissary itu tidak menerbangkan pemain ke Hyjal -- tugasnya
---   memindahkan pemain ke Moonglade, tempat Emissary Windsong (39865)
---   menerima 27726 dan memberi "As Hyjal Burns" (25316) yang berakhir di Ysera
+--   Rantai Hyjal dimulai dari papan tugas: "Hero's Call: Mount Hyjal!" (27726)
+--   untuk Alliance dan "Warchief's Command: Mount Hyjal!" (27721) untuk Horde.
+--   Keduanya menyuruh pemain menemui Cenarion Emissary Jademoon di Stormwind
+--   Keep (entry 15187) atau Cenarion Emissary Blackhoof di Orgrimmar (15188).
+--   Emissary itu tidak menerbangkan pemain ke Hyjal -- tugasnya memindahkan
+--   pemain ke Moonglade, tempat Emissary Windsong (39865) menerima kedua
+--   breadcrumb itu dan memberi "As Hyjal Burns" (25316) yang berakhir di Ysera
 --   di Nordrassil.
 --
 --   Di server ini gossip emissary tidak melakukan apa-apa, jadi rantainya buntu
@@ -72,7 +73,9 @@ SELECT @GUID_WINDSONG, @WINDSONG, 1, 0, 0, 7801.04, -2430.96, 487.675,
 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM `creature` `c` WHERE `c`.`id` = @WINDSONG);
 
-INSERT IGNORE INTO `creature_questender`   (`id`, `quest`) VALUES (@WINDSONG, 27726), (@WINDSONG, 29386);
+-- 27726 Alliance, 27721 Horde. Quest 29386 memakai judul yang sama tapi tidak
+-- punya pemberi maupun penutup di data retail, jadi tidak diikutkan.
+INSERT IGNORE INTO `creature_questender`   (`id`, `quest`) VALUES (@WINDSONG, 27726), (@WINDSONG, 27721);
 INSERT IGNORE INTO `creature_queststarter` (`id`, `quest`) VALUES (@WINDSONG, 25316);
 
 -- ---------------------------------------------------------------------------
