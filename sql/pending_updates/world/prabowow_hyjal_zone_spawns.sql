@@ -5560,6 +5560,33 @@ INSERT INTO `gameobject` (`guid`, `id`, `map`, `position_x`, `position_y`, `posi
 (8400864, 209128, 1, 3999.74, -2970.3, 1002.5, 1.92859, 0, 0, 0.821647, 0.569997, 300, 255, 1, 1, 0, 0);
 
 -- ---------------------------------------------------------------------------
+-- Buang yang bentrok dengan spawn yang sudah ada
+--
+-- SFDB bukan benar-benar kosong di Hyjal: ada segelintir spawn di sana
+-- (149 creature dan 44 gameobject saat file ini dibuat). Baris hasil port
+-- yang berdiri sedekat 10 yard dari spawn lama dengan entry yang sama
+-- dibuang, supaya tidak ada NPC atau objek dobel di tempat yang sama.
+-- ---------------------------------------------------------------------------
+
+DELETE `c` FROM `creature` `c`
+JOIN `creature` `old`
+  ON `old`.`id` = `c`.`id` AND `old`.`map` = `c`.`map`
+ AND `old`.`guid` NOT BETWEEN 8400001 AND 8404000
+ AND ABS(`old`.`position_x` - `c`.`position_x`) < 10.0
+ AND ABS(`old`.`position_y` - `c`.`position_y`) < 10.0
+ AND ABS(`old`.`position_z` - `c`.`position_z`) < 10.0
+WHERE `c`.`guid` BETWEEN 8400001 AND 8404000;
+
+DELETE `g` FROM `gameobject` `g`
+JOIN `gameobject` `old`
+  ON `old`.`id` = `g`.`id` AND `old`.`map` = `g`.`map`
+ AND `old`.`guid` NOT BETWEEN 8400001 AND 8401000
+ AND ABS(`old`.`position_x` - `g`.`position_x`) < 10.0
+ AND ABS(`old`.`position_y` - `g`.`position_y`) < 10.0
+ AND ABS(`old`.`position_z` - `g`.`position_z`) < 10.0
+WHERE `g`.`guid` BETWEEN 8400001 AND 8401000;
+
+-- ---------------------------------------------------------------------------
 -- Siapa memberi dan menutup quest zona 616
 -- ---------------------------------------------------------------------------
 

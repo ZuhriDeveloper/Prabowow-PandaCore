@@ -50,6 +50,9 @@ from pathlib import Path
 ZONE_HYJAL = 616
 BASE_PHASE = 169
 DEDUPE_YARDS = 3.0
+# Radius yang dipakai SQL untuk membuang baris hasil port yang bentrok dengan
+# spawn yang sudah lebih dulu ada di DB.
+EXISTING_SPAWN_YARDS = 10.0
 
 CREATURE_GUID_FIRST = 8400001
 CREATURE_GUID_LAST = 8404000
@@ -602,6 +605,37 @@ def generate(data: dict, out_path: Path, dump_name: str):
         write_insert(out, "gameobject", GAMEOBJECT_COLUMNS,
                      [gameobject_row(row, GAMEOBJECT_GUID_FIRST + index)
                       for index, row in enumerate(gameobjects)])
+
+        out.write("-- ---------------------------------------------------------------------------\n")
+        out.write("-- Buang yang bentrok dengan spawn yang sudah ada\n")
+        out.write("--\n")
+        out.write("-- SFDB bukan benar-benar kosong di Hyjal: ada segelintir spawn di sana\n")
+        out.write("-- (149 creature dan 44 gameobject saat file ini dibuat). Baris hasil port\n")
+        out.write("-- yang berdiri sedekat %d yard dari spawn lama dengan entry yang sama\n" % int(EXISTING_SPAWN_YARDS))
+        out.write("-- dibuang, supaya tidak ada NPC atau objek dobel di tempat yang sama.\n")
+        out.write("-- ---------------------------------------------------------------------------\n\n")
+        out.write("DELETE `c` FROM `creature` `c`\n"
+                  "JOIN `creature` `old`\n"
+                  "  ON `old`.`id` = `c`.`id` AND `old`.`map` = `c`.`map`\n"
+                  " AND `old`.`guid` NOT BETWEEN %d AND %d\n"
+                  " AND ABS(`old`.`position_x` - `c`.`position_x`) < %s\n"
+                  " AND ABS(`old`.`position_y` - `c`.`position_y`) < %s\n"
+                  " AND ABS(`old`.`position_z` - `c`.`position_z`) < %s\n"
+                  "WHERE `c`.`guid` BETWEEN %d AND %d;\n\n"
+                  % (CREATURE_GUID_FIRST, CREATURE_GUID_LAST,
+                     EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS,
+                     CREATURE_GUID_FIRST, CREATURE_GUID_LAST))
+        out.write("DELETE `g` FROM `gameobject` `g`\n"
+                  "JOIN `gameobject` `old`\n"
+                  "  ON `old`.`id` = `g`.`id` AND `old`.`map` = `g`.`map`\n"
+                  " AND `old`.`guid` NOT BETWEEN %d AND %d\n"
+                  " AND ABS(`old`.`position_x` - `g`.`position_x`) < %s\n"
+                  " AND ABS(`old`.`position_y` - `g`.`position_y`) < %s\n"
+                  " AND ABS(`old`.`position_z` - `g`.`position_z`) < %s\n"
+                  "WHERE `g`.`guid` BETWEEN %d AND %d;\n\n"
+                  % (GAMEOBJECT_GUID_FIRST, GAMEOBJECT_GUID_LAST,
+                     EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS,
+                     GAMEOBJECT_GUID_FIRST, GAMEOBJECT_GUID_LAST))
 
         out.write("-- ---------------------------------------------------------------------------\n")
         out.write("-- Siapa memberi dan menutup quest zona 616\n")
