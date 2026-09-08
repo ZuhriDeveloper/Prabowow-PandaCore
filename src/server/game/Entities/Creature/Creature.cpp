@@ -11,6 +11,7 @@
 #include "Creature.h"
 #include "CreatureAI.h"
 #include "CreatureAISelector.h"
+#include "CreatureBaseHealthSelection.h"
 #include "CreatureGroups.h"
 #include "DatabaseEnv.h"
 #include "DBCStores.h"
@@ -120,12 +121,12 @@ bool AssistDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
     return true;
 }
 
-uint32 CreatureBaseStats::GenerateHealth(CreatureTemplate const* info) const
+uint32 CreatureBaseStats::GenerateHealth(CreatureTemplate const* info, uint32 level) const
 {
-    // MoP uses the current client health curve for all creatures.  The
-    // template expansion controls content/XP, not which historical health
-    // curve the 5.4.8 client displays.
-    return uint32(ceil(BaseHealth[CURRENT_CONTENT_EXP] * info->ModHealth));
+    uint32 const baseHealth = Skyfire::Creatures::SelectBaseHealth(BaseHealth, MAX_CREATURE_BASE_HP,
+        info->expansion, level, CURRENT_CONTENT_EXP);
+
+    return uint32(ceil(baseHealth * info->ModHealth));
 }
 
 CreatureBaseStats const* CreatureBaseStats::GetBaseStats(uint8 level, uint8 unitClass)
@@ -1057,7 +1058,7 @@ void Creature::SelectLevel(const CreatureTemplate* cinfo)
     // health
     float healthmod = _GetHealthMod(rank);
 
-    uint32 basehp = stats->GenerateHealth(cinfo);
+    uint32 basehp = stats->GenerateHealth(cinfo, level);
     uint32 health = uint32(basehp * healthmod);
 
     SetCreateHealth(health);
