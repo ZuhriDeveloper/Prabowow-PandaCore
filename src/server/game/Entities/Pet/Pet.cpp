@@ -5,6 +5,7 @@
 
 #include "Common.h"
 #include "CreatureAI.h"
+#include "CreatureBaseHealthSelection.h"
 #include "DatabaseEnv.h"
 #include "Formulas.h"
 #include "Group.h"
@@ -1003,7 +1004,8 @@ bool Guardian::InitStatsForLevel(uint8 petlevel)
     {
         // remove elite bonuses included in DB values
         CreatureBaseStats const* stats = sObjectMgr->GetCreatureBaseStats(petlevel, cinfo->unit_class);
-        SetCreateHealth(stats->BaseHealth[CURRENT_CONTENT_EXP]);
+        SetCreateHealth(Skyfire::Creatures::SelectBaseHealth(stats->BaseHealth, MAX_CREATURE_BASE_HP,
+            cinfo->expansion, petlevel, CURRENT_CONTENT_EXP));
         SetCreateMana(stats->BaseMana);
 
         SetCreateStat(STAT_STRENGTH, 22);

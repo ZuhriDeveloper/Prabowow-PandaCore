@@ -882,3 +882,14 @@ target_include_directories(game_domain_tests PRIVATE
 )
 
 add_test(NAME game_domain_tests COMMAND game_domain_tests)
+
+add_executable(creature_base_health_tests
+  CreatureBaseHealthTests.cpp
+)
+
+target_include_directories(creature_base_health_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/src/server/shared
+  ${CMAKE_SOURCE_DIR}/src/server/game/Entities/Creature
+)
+
+add_test(NAME creature_base_health_tests COMMAND creature_base_health_tests)

@@ -207,7 +207,7 @@ struct CreatureBaseStats
 
     // Helpers
 
-    uint32 GenerateHealth(CreatureTemplate const* info) const;
+    uint32 GenerateHealth(CreatureTemplate const* info, uint32 level) const;
 
     float GenerateBaseDamage(CreatureTemplate const* info) const
     {
