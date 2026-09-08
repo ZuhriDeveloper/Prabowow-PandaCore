@@ -412,11 +412,16 @@ def collect(dump: Path):
     quest_ids: set[str] = set()
     relations: dict[str, list[tuple[str, str]]] = defaultdict(list)
 
+    loot: list[dict] = []
+    loot_references: set[str] = set()
+    reference_loot: list[dict] = []
+
     second_pass = {
         "creature_template", "gameobject_template", "gameobject_template_addon",
         "creature_equip_template", "quest_template",
         "creature_queststarter", "creature_questender",
         "gameobject_queststarter", "gameobject_questender",
+        "creature_loot_template", "reference_loot_template",
     }
 
     for table, row in scan(dump, second_pass):
@@ -439,6 +444,17 @@ def collect(dump: Path):
         elif table in ("creature_queststarter", "creature_questender",
                        "gameobject_queststarter", "gameobject_questender"):
             relations[table].append((row["id"], row["quest"]))
+        elif table == "creature_loot_template" and row["Entry"] in creature_entries:
+            # Difilter dengan entry creature, bukan lootid: di dump ini semua 73
+            # loot table Hyjal memakai lootid == entry, dan tabel loot muncul
+            # sebelum creature_template sehingga lootid belum terbaca di sini.
+            loot.append(row)
+            if row["Reference"] != "0":
+                loot_references.add(row["Reference"])
+        elif table == "reference_loot_template" and row["Entry"] in loot_references:
+            # Aman karena reference_loot_template ada di urutan terakhir dump,
+            # jadi loot_references sudah lengkap saat barisnya lewat.
+            reference_loot.append(row)
 
     for table in list(relations):
         relations[table] = [pair for pair in relations[table] if pair[1] in quest_ids]
@@ -462,6 +478,8 @@ def collect(dump: Path):
         "equipment": equipment,
         "quests": quest_ids,
         "relations": relations,
+        "loot": loot,
+        "reference_loot": reference_loot,
     }
 
 
@@ -647,12 +665,114 @@ def generate(data: dict, out_path: Path, dump_name: str):
                          [[entry, quest] for entry, quest in pairs], ignore=True)
 
 
+LOOT_HEADER = """-- Mount Hyjal: loot table yang tidak ada di dump SFDB.
+--
+-- Latar belakang
+--   Ke-73 loot table creature Hyjal kosong di DB ini, padahal
+--   `creature_loot_template` secara keseluruhan sehat (368 ribu baris, 8768
+--   tabel) dan zona MoP tidak punya satu pun lootid yang menggantung. Jadi ini
+--   lubang khusus Hyjal: mob-nya tidak menjatuhkan apa pun, uang sekalipun,
+--   dan sembilan drop quest tidak pernah keluar.
+--
+-- Dibuat oleh tools/dev/port_hyjal_spawns.py --loot-out -- jangan diedit
+-- tangan, ubah skripnya lalu bangkitkan ulang.
+--
+-- Terjemahan skemanya, karena dua sisi tidak sama
+--   4.3.4 memisahkan Reference dan QuestRequired jadi kolom sendiri; SkyFire
+--   memampatkan keduanya ke dua kolom lama:
+--     ChanceOrQuestChance = Chance, dinegatifkan kalau QuestRequired = 1
+--                           (LootStoreItem menyimpannya sebagai needs_quest)
+--     mincountOrRef       = -Reference kalau baris itu rujukan, selain itu MinCount
+--   Baris IsCurrency dibuang: SkyFire tidak punya loot mata uang, dan id mata
+--   uang yang masuk ke kolom item akan dibaca sebagai item yang tidak ada.
+--
+-- Idempotent dan tidak merusak: baris hanya masuk untuk loot table yang saat
+-- ini benar-benar KOSONG. Kalau satu entry sudah punya loot, tabelnya dibiarkan
+-- utuh -- tidak dicampur, tidak ditimpa.
+--
+-- Catatan: item yang tidak ada di `item_template` akan dilewati core sambil
+-- menulis error di log `sql.sql`. Itu wajar untuk item Cataclysm yang tidak
+-- terbawa ke 5.4.8, dan tidak menggagalkan impor.
+"""
+
+
+def loot_row(source: dict) -> list[str]:
+    chance = number(source["Chance"], "0")
+    if source["QuestRequired"] == "1" and not chance.startswith("-"):
+        chance = "-" + chance
+    reference = number(source["Reference"])
+    mincount_or_ref = "-" + reference if reference != "0" else number(source["MinCount"], "1")
+    return [
+        number(source["Entry"]), number(source["Item"]), chance,
+        number(source["LootMode"], "1"), number(source["GroupId"]),
+        mincount_or_ref, number(source["MaxCount"], "1"),
+    ]
+
+
+LOOT_COLUMNS = ["entry", "item", "ChanceOrQuestChance", "lootmode", "groupid",
+                "mincountOrRef", "maxcount"]
+
+STAGE_DDL = """DROP TABLE IF EXISTS `{stage}`;
+CREATE TABLE `{stage}` (
+    `entry` INT UNSIGNED NOT NULL,
+    `item` INT UNSIGNED NOT NULL,
+    `ChanceOrQuestChance` FLOAT NOT NULL,
+    `lootmode` SMALLINT UNSIGNED NOT NULL,
+    `groupid` TINYINT UNSIGNED NOT NULL,
+    `mincountOrRef` INT NOT NULL,
+    `maxcount` SMALLINT UNSIGNED NOT NULL,
+    PRIMARY KEY (`entry`, `item`)
+);
+
+"""
+
+
+def write_loot_block(out, target: str, rows: list[list[str]], stage: str, pending: str):
+    if not rows:
+        return
+    out.write(STAGE_DDL.format(stage=stage))
+    write_insert(out, stage, LOOT_COLUMNS, rows)
+
+    out.write("-- Hanya loot table yang sekarang kosong yang diisi.\n")
+    out.write("DROP TABLE IF EXISTS `%s`;\n" % pending)
+    out.write("CREATE TABLE `%s` (`entry` INT UNSIGNED NOT NULL PRIMARY KEY);\n" % pending)
+    out.write("INSERT INTO `%s` (`entry`) SELECT DISTINCT `entry` FROM `%s`;\n" % (pending, stage))
+    out.write("DELETE FROM `%s` WHERE `entry` IN (SELECT `entry` FROM `%s`);\n\n" % (pending, target))
+
+    columns = ", ".join("`%s`" % name for name in LOOT_COLUMNS)
+    source_columns = ", ".join("`s`.`%s`" % name for name in LOOT_COLUMNS)
+    out.write("INSERT INTO `%s` (%s)\n"
+              "SELECT %s FROM `%s` `s`\n"
+              "JOIN `%s` `n` ON `n`.`entry` = `s`.`entry`;\n\n"
+              % (target, columns, source_columns, stage, pending))
+    out.write("DROP TABLE IF EXISTS `%s`;\n" % stage)
+    out.write("DROP TABLE IF EXISTS `%s`;\n\n" % pending)
+
+
+def generate_loot(data: dict, out_path: Path, dump_name: str):
+    creature_rows = [loot_row(row) for row in data["loot"] if row["IsCurrency"] != "1"]
+    reference_rows = [loot_row(row) for row in data["reference_loot"] if row["IsCurrency"] != "1"]
+
+    with out_path.open("w", encoding="utf8", newline="\n") as out:
+        out.write(LOOT_HEADER)
+        out.write("--\n-- Sumber: %s\n" % dump_name)
+        out.write("-- Isi: %d baris creature_loot_template, %d baris reference_loot_template.\n\n"
+                  % (len(creature_rows), len(reference_rows)))
+
+        write_loot_block(out, "reference_loot_template", reference_rows,
+                         "prabowow_hyjal_ref_stage", "prabowow_hyjal_ref_pending")
+        write_loot_block(out, "creature_loot_template", creature_rows,
+                         "prabowow_hyjal_loot_stage", "prabowow_hyjal_loot_pending")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dump", required=True, type=Path,
                         help="dump world TrinityCore 4.3.4 (mysqldump .sql)")
     parser.add_argument("--out", required=True, type=Path,
-                        help="file SQL yang dihasilkan")
+                        help="file SQL spawn yang dihasilkan")
+    parser.add_argument("--loot-out", type=Path,
+                        help="kalau diisi, loot table Hyjal ditulis ke file ini")
     args = parser.parse_args(argv)
 
     if not args.dump.is_file():
@@ -667,6 +787,13 @@ def main(argv=None):
     args.out.parent.mkdir(parents=True, exist_ok=True)
     generate(data, args.out, args.dump.name)
     print("ditulis: %s" % args.out, file=sys.stderr)
+
+    if args.loot_out:
+        print("loot %d baris, reference %d baris"
+              % (len(data["loot"]), len(data["reference_loot"])), file=sys.stderr)
+        args.loot_out.parent.mkdir(parents=True, exist_ok=True)
+        generate_loot(data, args.loot_out, args.dump.name)
+        print("ditulis: %s" % args.loot_out, file=sys.stderr)
 
 
 if __name__ == "__main__":
