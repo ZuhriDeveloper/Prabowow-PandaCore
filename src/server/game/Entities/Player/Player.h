@@ -1796,6 +1796,7 @@ public:
     QuestStatus GetQuestStatus(uint32 quest_id) const;
     void SetQuestStatus(uint32 quest_id, QuestStatus status);
     void RemoveActiveQuest(uint32 quest_id);
+    void AddRewardedQuest(uint32 quest_id);
     void RemoveRewardedQuest(uint32 quest_id);
 
     void SetDailyQuestStatus(uint32 quest_id);

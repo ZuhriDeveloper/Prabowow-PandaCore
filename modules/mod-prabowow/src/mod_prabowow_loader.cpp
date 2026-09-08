@@ -13,6 +13,7 @@ void AddSC_prabowow_auto_sell();
 void AddSC_prabowow_flight_paths();
 void AddSC_prabowow_heirloom_vendor();
 void AddSC_prabowow_starter_mail();
+void AddSC_prabowow_startzone_skip();
 
 void Addmod_prabowowScripts()
 {
@@ -22,4 +23,5 @@ void Addmod_prabowowScripts()
     AddSC_prabowow_flight_paths();
     AddSC_prabowow_heirloom_vendor();
     AddSC_prabowow_starter_mail();
+    AddSC_prabowow_startzone_skip();
 }

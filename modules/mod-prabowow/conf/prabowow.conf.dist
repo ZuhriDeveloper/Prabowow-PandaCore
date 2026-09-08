@@ -111,3 +111,86 @@ PraboWoW.StarterMail.Enable = 1
 PraboWoW.StarterMail.ItemId = 23162
 PraboWoW.StarterMail.ItemCount = 1
 PraboWoW.StarterMail.SenderEntry = 900001
+
+#
+#    PraboWoW.StartZoneSkip.Enable
+#        Description: Master switch for the Death Knight / Worgen / Goblin starting
+#                     zone skip. Their quest chains are too broken to play through,
+#                     so a matching character is treated as if they had finished:
+#                     every quest of the configured zones is marked rewarded, the
+#                     level the chain would have left them at is granted, the spells
+#                     it teaches are learned, and they are moved to their faction
+#                     capital with their hearthstone set there. Runs once per
+#                     character, tracked in characters.character_startzone_skip.
+#                     TEMPORARY -- turn a profile off as its chain gets repaired.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+#    PraboWoW.StartZoneSkip.<Profile>.Enable
+#        Description: Per-profile switch. <Profile> is DeathKnight (class 6, any
+#                     race), Worgen (race 22) or Goblin (race 9).
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+#    PraboWoW.StartZoneSkip.<Profile>.Level
+#        Description: Level the character is raised to, matching where the chain
+#                     would have left them. Never lowers anyone, and is capped at
+#                     MaxPlayerLevel. 0 leaves the level alone.
+#                     Mists of Pandaria has no talent points -- talents unlock by
+#                     level tier -- so this is also what grants the talent tiers.
+#        Default:     58 (DeathKnight), 12 (Worgen), 12 (Goblin)
+#
+#    PraboWoW.StartZoneSkip.<Profile>.Zones
+#        Description: Comma separated zone ids. Every non-repeatable, non-seasonal
+#                     quest whose quest_template.ZoneOrSort is one of these is marked
+#                     rewarded, and a character standing in one of these zones is the
+#                     one who gets teleported out. The worldserver log reports how
+#                     many quests each profile matched at startup; a count of 0 means
+#                     the ids are wrong.
+#        Default:     "4298"      (DeathKnight: Plaguelands: The Scarlet Enclave)
+#                     "4714,4755" (Worgen: Gilneas, Gilneas City)
+#                     "4737,4720" (Goblin: Kezan, The Lost Isles)
+#
+#    PraboWoW.StartZoneSkip.<Profile>.Spells
+#        Description: Comma separated spell ids taught on top of the skip -- the
+#                     racials and the spells the chain would have granted. Ids the
+#                     server does not know are logged and skipped. A Worgen or Goblin
+#                     Death Knight gets both lists.
+#        Default:     "53428,50977,48778" (DeathKnight: Runeforging, Death Gate,
+#                                          Acherus Deathcharger)
+#                     "68996,87840,68992,68975,68976,68978" (Worgen: Two Forms,
+#                                          Running Wild, Darkflight, Viciousness,
+#                                          Aberration, Flayer)
+#                     "69070,69041,69045,69044,69043,69046" (Goblin: Rocket Jump,
+#                                          Rocket Barrage, Time is Money, Best Deals
+#                                          Anywhere, Better Living Through Chemistry,
+#                                          Pack Hobgoblin)
+#
+#    PraboWoW.StartZoneSkip.Alliance.Destination
+#    PraboWoW.StartZoneSkip.Horde.Destination
+#        Description: Where the character lands and where their hearthstone is bound,
+#                     as "map,x,y,z,orientation,areaId". Shared by all three profiles
+#                     and picked by the character's faction, so a Horde Death Knight
+#                     goes to Orgrimmar and an Alliance one to Stormwind.
+#        Default:     "0,-8842.09,626.96,94.14,3.66,1519" (Stormwind City)
+#                     "1,1629.36,-4373.39,31.27,0.09,1637" (Orgrimmar)
+
+PraboWoW.StartZoneSkip.Enable = 1
+
+PraboWoW.StartZoneSkip.DeathKnight.Enable = 1
+PraboWoW.StartZoneSkip.DeathKnight.Level = 58
+PraboWoW.StartZoneSkip.DeathKnight.Zones = "4298"
+PraboWoW.StartZoneSkip.DeathKnight.Spells = "53428,50977,48778"
+
+PraboWoW.StartZoneSkip.Worgen.Enable = 1
+PraboWoW.StartZoneSkip.Worgen.Level = 12
+PraboWoW.StartZoneSkip.Worgen.Zones = "4714,4755"
+PraboWoW.StartZoneSkip.Worgen.Spells = "68996,87840,68992,68975,68976,68978"
+
+PraboWoW.StartZoneSkip.Goblin.Enable = 1
+PraboWoW.StartZoneSkip.Goblin.Level = 12
+PraboWoW.StartZoneSkip.Goblin.Zones = "4737,4720"
+PraboWoW.StartZoneSkip.Goblin.Spells = "69070,69041,69045,69044,69043,69046"
+
+PraboWoW.StartZoneSkip.Alliance.Destination = "0,-8842.09,626.96,94.14,3.66,1519"
+PraboWoW.StartZoneSkip.Horde.Destination = "1,1629.36,-4373.39,31.27,0.09,1637"

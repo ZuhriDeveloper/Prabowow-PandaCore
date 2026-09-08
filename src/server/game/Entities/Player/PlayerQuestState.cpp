@@ -1509,6 +1509,15 @@ void Player::RemoveActiveQuest(uint32 quest_id)
     }
 }
 
+// Counterpart of RemoveRewardedQuest. RewardQuest() is the only other writer and it
+// also hands out XP, money and items; scripts that just need a quest to count as done
+// -- skipping a broken chain, for instance -- use this instead.
+void Player::AddRewardedQuest(uint32 quest_id)
+{
+    m_RewardedQuests.insert(quest_id);
+    m_RewardedQuestsSave[quest_id] = true;
+}
+
 void Player::RemoveRewardedQuest(uint32 quest_id)
 {
     RewardedQuestSet::iterator rewItr = m_RewardedQuests.find(quest_id);
