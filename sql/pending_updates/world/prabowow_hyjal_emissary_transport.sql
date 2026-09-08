@@ -21,11 +21,11 @@
 --   punya ketergantungan DBC sama sekali, jadi itu yang dipakai. Harganya:
 --   tidak ada animasi dan cast time teleport, pemain langsung pindah.
 --
--- Kenapa koordinat tujuan dihitung, bukan ditulis
---   Sama seperti prabowow_heirloom_vendor_capitals.sql: yang pasti benar adalah
---   posisi NPC yang sudah ada di DB. Titik mendarat diambil 5 yard di depan
---   Windsong, menghadap balik ke arahnya, dengan cadangan koordinat spawn
---   aslinya kalau Windsong ternyata belum ter-spawn sama sekali.
+-- Dari mana koordinat tujuannya
+--   Titik pendaratan aslinya ada di `spell_target_position` milik kedua spell
+--   itu: map 1, 7827.41 -2423.57 488.806, orientasi 3.38425 -- Nighthaven,
+--   sekitar 26 yard dari Windsong. File ini membaca baris itu dari DB kalau
+--   ada, dan jatuh ke angka yang sama sebagai literal kalau tidak.
 --
 -- Idempotent: baris milik file ini dihapus dulu, lalu diisi ulang. Yang bisa
 -- saja sudah benar di SFDB (template, link quest, game_tele) hanya diisi kalau
@@ -82,16 +82,15 @@ INSERT IGNORE INTO `creature_queststarter` (`id`, `quest`) VALUES (@WINDSONG, 25
 -- 2. Titik mendarat di Moonglade
 -- ---------------------------------------------------------------------------
 
-SET @WX := COALESCE((SELECT `position_x`  FROM `creature` WHERE `id` = @WINDSONG LIMIT 1), 7801.04);
-SET @WY := COALESCE((SELECT `position_y`  FROM `creature` WHERE `id` = @WINDSONG LIMIT 1), -2430.96);
-SET @WZ := COALESCE((SELECT `position_z`  FROM `creature` WHERE `id` = @WINDSONG LIMIT 1), 487.675);
-SET @WO := COALESCE((SELECT `orientation` FROM `creature` WHERE `id` = @WINDSONG LIMIT 1), 0.296706);
-
--- 5 yard di depan Windsong, sisi tempat lawan bicaranya berdiri.
-SET @LAND_X := @WX + 5.0 * COS(@WO);
-SET @LAND_Y := @WY + 5.0 * SIN(@WO);
-SET @LAND_Z := @WZ;
-SET @LAND_O := @WO + PI();      -- menghadap balik ke Windsong
+-- 86587 spell Alliance, 86565 spell Horde; keduanya mendarat di titik yang sama.
+SET @LAND_X := COALESCE((SELECT `target_position_x`  FROM `spell_target_position`
+                         WHERE `id` IN (86587, 86565) LIMIT 1),  7827.41);
+SET @LAND_Y := COALESCE((SELECT `target_position_y`  FROM `spell_target_position`
+                         WHERE `id` IN (86587, 86565) LIMIT 1), -2423.57);
+SET @LAND_Z := COALESCE((SELECT `target_position_z`  FROM `spell_target_position`
+                         WHERE `id` IN (86587, 86565) LIMIT 1),  488.806);
+SET @LAND_O := COALESCE((SELECT `target_orientation` FROM `spell_target_position`
+                         WHERE `id` IN (86587, 86565) LIMIT 1),  3.38425);
 
 -- ---------------------------------------------------------------------------
 -- 3. Pilihan gossip di kedua emissary
