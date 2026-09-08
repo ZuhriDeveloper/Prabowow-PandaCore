@@ -37,3 +37,6 @@ cmake-build-debug/
 /mcp_config.json
 /dbc_export/
 
+
+# Byte-code dari skrip Python di tools/dev
+__pycache__/
