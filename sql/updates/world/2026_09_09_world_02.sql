@@ -32,21 +32,6 @@
 --   log sebelum file ini masuk cukup membatalkan lalu mengambilnya lagi dari
 --   Windsong.
 --
--- Untuk pemain yang tersangkut dengan breadcrumb yang tidak selesai
---   27726/27721 ("Hero's Call" / "Warchief's Command: Mount Hyjal!") punya
---   objective event yang seharusnya ditandai selesai oleh emissary ibu kota
---   saat memindahkan pemain; prabowow_hyjal_breadcrumb_completion.sql yang
---   memasang itu. Tapi siapa pun yang dipindahkan sebelum file itu masuk sudah
---   berdiri di Moonglade dengan quest menggantung, dan tidak masuk akal
---   menyuruhnya pulang ke Stormwind untuk menekan tombol yang sama lagi.
---   Jadi Windsong juga menandainya: SMART_EVENT_GOSSIP_HELLO menyala saat
---   jendelanya dibuka -- kedua handler hello (QuestHandler.cpp:147,
---   NPCHandler.cpp:339) memanggil OnGossipHello SEBELUM menu quest dibangun,
---   jadi pada klik yang sama quest-nya sudah tampil siap diserahkan. Aksi 15
---   diam saja untuk pemain yang tidak memegang quest-nya, dan secara makna
---   memang pas: "Transportation to Moonglade Secured" -- ia sudah di
---   Moonglade, bicara dengan orang yang dituju.
---
 -- Perjalanan balik
 --   Tidak perlu diurus di sini: PraboWoW.AllFlightPaths.Enable menandai semua
 --   titik terbang sebagai dikenal, jadi Nordrassil bisa dituju dari flight
@@ -54,10 +39,8 @@
 --
 -- Idempotent: baris smart_scripts milik file ini dihapus dulu, lalu diisi ulang.
 
-SET @WINDSONG     := 39865;  -- Emissary Windsong, Nighthaven
-SET @QUEST_HYJAL  := 25316;  -- As Hyjal Burns
-SET @BREADCRUMB_A := 27726;  -- Hero's Call: Mount Hyjal!
-SET @BREADCRUMB_H := 27721;  -- Warchief's Command: Mount Hyjal!
+SET @WINDSONG   := 39865;   -- Emissary Windsong, Nighthaven
+SET @QUEST_HYJAL := 25316;  -- As Hyjal Burns
 
 -- ---------------------------------------------------------------------------
 -- 1. Windsong harus benar-benar menawarkan quest, dan harus jalan dengan SmartAI
@@ -97,11 +80,6 @@ SET @LAND_O   := 5.34;
 -- ---------------------------------------------------------------------------
 -- 3. Aksinya
 --
--- Baris 0: tumpangan ke Nordrassil. Baris 1-2: penyelamat breadcrumb, lihat
--- bagian header; SMART_EVENT_GOSSIP_HELLO (64) tidak punya parameter, dan
--- SMART_ACTION_CALL_AREAEXPLOREDOREVENTHAPPENS (15) membawa QuestID di
--- action_param1 -- angkanya 15 di SkyFire, bukan 33 seperti TrinityCore.
---
 -- SMART_EVENT_ACCEPTED_QUEST (19) menerima QuestID di event_param1; 0 berarti
 -- quest apa pun, jadi id-nya diisi supaya quest lain milik Windsong tidak ikut
 -- memindahkan pemain. SMART_ACTION_TELEPORT (62) memakai action_param1 sebagai
@@ -124,12 +102,4 @@ VALUES
     (@WINDSONG, 0, 0, 0, 19, 0, 100, 0, @QUEST_HYJAL, 0, 0, 0, 0,
      62, @LAND_MAP, 0, 0, 0, 0, 0,
      7, 0, 0, 0, @LAND_X, @LAND_Y, @LAND_Z, @LAND_O,
-     'Emissary Windsong - On quest As Hyjal Burns accepted - Teleport player to Nordrassil'),
-    (@WINDSONG, 0, 1, 2, 64, 0, 100, 0, 0, 0, 0, 0, 0,
-     15, @BREADCRUMB_A, 0, 0, 0, 0, 0,
-     7, 0, 0, 0, 0, 0, 0, 0,
-     'Emissary Windsong - On gossip hello - Complete Hero''s Call: Mount Hyjal! for player'),
-    (@WINDSONG, 0, 2, 0, 61, 0, 100, 0, 0, 0, 0, 0, 0,
-     15, @BREADCRUMB_H, 0, 0, 0, 0, 0,
-     7, 0, 0, 0, 0, 0, 0, 0,
-     'Emissary Windsong - Linked - Complete Warchief''s Command: Mount Hyjal! for player');
+     'Emissary Windsong - On quest As Hyjal Burns accepted - Teleport player to Nordrassil');
