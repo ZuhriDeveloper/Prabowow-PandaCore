@@ -47,7 +47,7 @@ SET @QUEST_HYJAL := 25316;  -- As Hyjal Burns
 --
 -- 2026_09_08_world_01.sql memasang templatenya lewat INSERT IGNORE, jadi kalau
 -- SFDB sudah punya entry 39865 lebih dulu, npcflag dan AIName di sana yang
--- dipakai -- dan keduanya belum tentu benar. Dua UPDATE ini menegaskan
+-- dipakai -- dan keduanya belum tentu benar. UPDATE di bawah menegaskan
 -- keduanya tanpa menyentuh kolom lain. QUESTGIVER = 0x2; SmartAI wajib supaya
 -- SmartAI::sQuestAccept (SmartAI.cpp:746) terpanggil.
 -- ---------------------------------------------------------------------------
@@ -85,6 +85,9 @@ SET @LAND_O   := 5.34;
 -- memindahkan pemain. SMART_ACTION_TELEPORT (62) memakai action_param1 sebagai
 -- map dan target_x/y/z/o sebagai tujuan, dengan SMART_TARGET_ACTION_INVOKER (7)
 -- supaya yang pindah pemainnya, bukan NPC-nya.
+--
+-- Aman memindahkan pemain di titik ini: QuestHandler.cpp:259 memanggil
+-- sQuestAccept setelah quest-nya masuk ke log, bukan sebelum.
 -- ---------------------------------------------------------------------------
 
 DELETE FROM `smart_scripts` WHERE `source_type` = 0 AND `entryorguid` = @WINDSONG;
