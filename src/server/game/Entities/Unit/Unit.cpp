@@ -6432,6 +6432,10 @@ bool Unit::InitTamedPet(Pet* pet, uint8 level, uint32 spell_id) const
     // this enables pet details window (Shift+P)
     pet->InitPetCreateSpells();
     //pet->InitLevelupSpellsForLevel();
+    // A tamed pet starts on its family's specialization. The pet is not in the world
+    // yet, so this only learns the spells -- the tame flow sends the pet spell list
+    // and writes the character_pet row afterwards.
+    pet->SetSpec(pet->GetDefaultSpecialization());
     pet->SetFullHealth();
     return true;
 }

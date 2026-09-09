@@ -696,6 +696,17 @@ target_include_directories(pet_transport_support_tests PRIVATE
 
 add_test(NAME pet_transport_support_tests COMMAND pet_transport_support_tests)
 
+add_executable(pet_specialization_tests
+  PetSpecializationTests.cpp
+)
+
+target_include_directories(pet_specialization_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/src/server/shared
+  ${CMAKE_SOURCE_DIR}/src/server/game/Entities/Pet
+)
+
+add_test(NAME pet_specialization_tests COMMAND pet_specialization_tests)
+
 add_executable(loot_count_tests
   LootCountTests.cpp
 )

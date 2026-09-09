@@ -736,10 +736,24 @@ Pet* ValidatePetSpecializationRequest(Player* player, SetPetSpecializationReques
     if (!player->IsInWorld())
         return NULL;
 
+    // Every rejection below is logged: a specialization request that dies here is
+    // invisible to the player, who sees the confirmation close and nothing else.
     Pet* pet = ObjectAccessor::GetPet(*player, request.petGuid);
-    if (!pet || !pet->IsPet() || pet->getPetType() != PetType::HUNTER_PET ||
-        pet->GetOwnerGUID() != player->GetGUID() || !pet->GetCharmInfo())
+    if (!pet)
+    {
+        SF_LOG_ERROR("entities.pet", "HandleSetPetSpecialization: pet (GUID: %u) doesn't exist for player %s (GUID: %u)",
+            uint32(GUID_LOPART(request.petGuid)), player->GetName().c_str(), player->GetGUIDLow());
         return NULL;
+    }
+
+    if (!pet->IsPet() || pet->getPetType() != PetType::HUNTER_PET ||
+        pet->GetOwnerGUID() != player->GetGUID() || !pet->GetCharmInfo())
+    {
+        SF_LOG_ERROR("entities.pet", "HandleSetPetSpecialization: pet (GUID: %u, entry: %u, type: %u) is not a hunter pet owned by player %s (GUID: %u)",
+            uint32(GUID_LOPART(request.petGuid)), pet->GetEntry(), uint32(pet->getPetType()),
+            player->GetName().c_str(), player->GetGUIDLow());
+        return NULL;
+    }
 
     return pet;
 }
@@ -1389,13 +1403,20 @@ void WorldSession::HandleLearnPreviewTalentsPet(WorldPacket& recvData)
 
 void WorldSession::HandleSetPetSpecialization(WorldPacket& recvData)
 {
-    SF_LOG_DEBUG("network", "CMSG_SET_PET_SPECIALIZATION");
-
     SetPetSpecializationRequest request = ReadSetPetSpecializationRequest(recvData);
+
+    SF_LOG_DEBUG("network", "CMSG_SET_PET_TALENT_TREE: talent tab %u for pet (GUID: %u) from %s",
+        request.talentTab, uint32(GUID_LOPART(request.petGuid)), GetPlayerInfo().c_str());
 
     Pet* pet = ValidatePetSpecializationRequest(GetPlayer(), request);
     if (!pet)
         return;
 
-    pet->SetSpec(pet->GetPetSpecByTalentTab(request.talentTab));
+    // A tab that resolves to nothing is a rejected request, not a request to drop the
+    // pet's specialization -- passing the 0 through would unlearn what it already has.
+    uint16 const specId = pet->GetPetSpecByTalentTab(int32(request.talentTab));
+    if (!specId)
+        return;
+
+    pet->SetSpec(specId);
 }

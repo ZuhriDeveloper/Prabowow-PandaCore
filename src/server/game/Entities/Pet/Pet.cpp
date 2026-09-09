@@ -13,6 +13,7 @@
 #include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "Pet.h"
+#include "PetSpecializationSupport.h"
 #include "PetTransportController.h"
 #include "PetTransportSupport.h"
 #include "SpellAuraEffects.h"
@@ -342,9 +343,6 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
     if (!temporary)
         Skyfire::PetTransport::BoardOwnerHunterPet(owner, owner->GetTransport());
 
-    uint16 specId = fields[16].GetUInt16();
-    SetSpec(specId);
-
     InitTalentForLevel();                                   // set original talents points before spell loading
 
     uint32 timediff = uint32(time(NULL) - fields[13].GetUInt32());
@@ -365,6 +363,13 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         // Stampede must not strip owner pet-change auras (current=false would RemovePetAura).
         CastPetAuras(temporary ? true : current);
     }
+
+    // After the saved spells, so the specialization only fills in what is missing.
+    // PetSpecId is 0 on every pet stored before the specialization was applied -- and
+    // on every pet tamed while it was broken -- so those fall back to their family's
+    // specialization rather than staying on none.
+    uint16 const savedSpec = fields[16].GetUInt16();
+    SetSpec(savedSpec ? savedSpec : GetDefaultSpecialization());
 
     // Remap charm number only after spells/cooldowns loaded from character_pet.
     if (temporary)
@@ -2250,24 +2255,60 @@ bool Pet::isControlled() const
     return false;
 }
 
-uint16 Pet::GetPetSpecByTalentTab(uint16 talenttab)
+uint16 Pet::GetPetSpecByTalentTab(int32 talenttab)
 {
-    uint16 specId = 0;
+    std::vector<Skyfire::Pets::SpecializationRow> rows;
+    rows.reserve(sChrSpecializationStore.GetNumRows());
+
     for (uint32 j = 0; j < sChrSpecializationStore.GetNumRows(); j++)
     {
         ChrSpecializationEntry const* specializationInfo = sChrSpecializationStore.LookupEntry(j);
-        if (!specializationInfo || specializationInfo->classId != 0)
+        if (!specializationInfo)
             continue;
 
-        if (specializationInfo->PetTabPage != talenttab)
-            continue;
+        // PetTabPage is signed in the .dbc -- it is -1 on every player specialization
+        // -- but the structure declares it unsigned, so it has to be read back as int32.
+        Skyfire::Pets::SpecializationRow const row =
+        {
+            specializationInfo->Id,
+            specializationInfo->classId,
+            int32(specializationInfo->PetTabPage)
+        };
 
-        if (specializationInfo->Id == m_petSpec)
-            continue;
-
-        specId = specializationInfo->Id;
+        rows.push_back(row);
     }
-    return specId;
+
+    uint32 const specId = Skyfire::Pets::ResolvePetSpecializationByTalentTab(rows.data(), uint32(rows.size()), talenttab);
+    if (!specId && talenttab != Skyfire::Pets::PET_TALENT_TYPE_NONE)
+    {
+        // Logged loudly: the client asking for a tab the client's own data does not
+        // carry is the one failure mode that looks like nothing happening at all.
+        std::ostringstream known;
+        for (std::vector<Skyfire::Pets::SpecializationRow>::const_iterator itr = rows.begin(); itr != rows.end(); ++itr)
+            if (Skyfire::Pets::IsPetSpecialization(*itr))
+                known << ' ' << itr->Id << ':' << itr->PetTalentType;
+
+        SF_LOG_ERROR("entities.pet", "Pet::GetPetSpecByTalentTab: talent tab %i matches no pet specialization for pet entry %u. Known pet specs (id:tab):%s",
+            talenttab, GetEntry(), known.str().empty() ? " none" : known.str().c_str());
+    }
+
+    return uint16(specId);
+}
+
+uint16 Pet::GetDefaultSpecialization()
+{
+    CreatureTemplate const* cInfo = GetCreatureTemplate();
+    if (!cInfo)
+        return 0;
+
+    CreatureFamilyEntry const* cFamily = sCreatureFamilyStore.LookupEntry(cInfo->family);
+    if (!cFamily || cFamily->petTalentType == Skyfire::Pets::PET_TALENT_TYPE_NONE)
+        return 0;
+
+    // Every MoP pet family still names one of the three specializations, and a pet
+    // that carries none leaves the client's specialization frame without a current
+    // selection to move away from.
+    return GetPetSpecByTalentTab(cFamily->petTalentType);
 }
 
 void Pet::UnlearnSpecializationSpells()
@@ -2303,36 +2344,75 @@ void Pet::LearnSpecializationSpells()
 
 void Pet::SetSpec(uint16 spec)
 {
-    if (m_petSpec == spec)
-        return;
-
-    // remove all the old spec's specalization spells, set the new spec, then add the new spec's spells
-    // clearActionBars is false because we'll be updating the pet actionbar later so we don't have to do it now.
-
-    // remove spec spells
-    UnlearnSpecializationSpells();
-
-
-    if (!sChrSpecializationStore.LookupEntry(spec))
+    // Validate before touching anything. Unlearning first and only then finding out
+    // the specialization is unknown left the pet on spec 0 with its specialization
+    // spells already gone.
+    if (spec && !sChrSpecializationStore.LookupEntry(spec))
     {
-        m_petSpec = 0;
+        SF_LOG_ERROR("entities.pet", "Pet::SetSpec: specialization %u is not in ChrSpecialization.dbc, pet entry %u keeps specialization %u",
+            uint32(spec), GetEntry(), uint32(m_petSpec));
         return;
     }
 
-    m_petSpec = spec;
+    bool const notifyOwner = !m_loading && IsInWorld();
 
+    if (m_petSpec == spec)
+    {
+        // The client still wants an answer to the specialization it just confirmed;
+        // without one its frame sits on the request and nothing appears to happen.
+        if (notifyOwner)
+            SendSpecializationToOwner();
+
+        return;
+    }
+
+    // remove all the old spec's specalization spells, set the new spec, then add the new spec's spells
+    UnlearnSpecializationSpells();
+
+    m_petSpec = spec;
 
     // learn spec spells
     LearnSpecializationSpells();
 
+    if (!notifyOwner)
+        return;
+
     // resend SMSG_PET_SPELLS_MESSAGE to remove old specialization spells from the pet action bar
     CleanupActionBar();
-    GetOwner()->PetSpellInitialize();
-
     if (Player* owner = GetOwner())
-    {
-        WorldPacket data(SMSG_SET_PET_SPEC, 2);
-        data << uint16(m_petSpec);
-        owner->GetSession()->SendPacket(&data);
-    }
+        owner->PetSpellInitialize();
+
+    SaveSpecializationToDB();
+    SendSpecializationToOwner();
+}
+
+void Pet::SendSpecializationToOwner()
+{
+    Player* owner = GetOwner();
+    if (!owner || !owner->GetSession())
+        return;
+
+    WorldPacket data(SMSG_SET_PET_SPEC, 2);
+    data << uint16(m_petSpec);
+    owner->GetSession()->SendPacket(&data);
+}
+
+void Pet::SaveSpecializationToDB()
+{
+    // Only a stored hunter pet owns a character_pet row. A temporary summon borrows a
+    // freshly generated pet number and must not write over the real pet's row.
+    if (getPetType() != PetType::HUNTER_PET || isTemporarySummoned() || !GetCharmInfo())
+        return;
+
+    Player* owner = GetOwner();
+    if (!owner)
+        return;
+
+    // Written straight away instead of riding on the next full pet save, so the
+    // choice survives a crash or a hard restart between saves.
+    PreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHAR_PET_SPEC);
+    stmt->setUInt16(0, m_petSpec);
+    stmt->setUInt32(1, owner->GetGUIDLow());
+    stmt->setUInt32(2, GetCharmInfo()->GetPetNumber());
+    CharacterDatabase.Execute(stmt);
 }

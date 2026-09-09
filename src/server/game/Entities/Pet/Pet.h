@@ -110,12 +110,15 @@ public:
 
 
     uint16 m_petSpec;
-    uint16 GetPetSpecByTalentTab(uint16 talenttab);
+    uint16 GetPetSpecByTalentTab(int32 talenttab);
     uint16 GetSpecialization() const { return m_petSpec; }
+    uint16 GetDefaultSpecialization();
 
     void SetSpec(uint16 spec);
     void UnlearnSpecializationSpells();
     void LearnSpecializationSpells();
+    void SendSpecializationToOwner();
+    void SaveSpecializationToDB();
 
     bool addSpell(uint32 spellId, ActiveStates active = ACT_DECIDE, PetSpellState state = PETSPELL_NEW, PetSpellType type = PETSPELL_NORMAL);
     bool learnSpell(uint32 spell_id);
