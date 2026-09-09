@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
-"""Generate the Mount Hyjal spawn port SQL from a TrinityCore 4.3.4 world dump.
+"""Generate a Cataclysm zone spawn port SQL from a TrinityCore 4.3.4 world dump.
 
-SFDB tidak punya isi zona Mount Hyjal (zone 616): tidak ada creature, tidak ada
+SFDB tidak punya isi zona Cataclysm 80-85: tidak ada creature, tidak ada
 gameobject, jadi rantai quest-nya buntu begitu pemain sampai di sana. Konten
-Hyjal di client MoP 5.4.8 pada dasarnya sama dengan Cataclysm, jadi data spawn
-diambil dari dump world TDB 4.3.4 lalu diterjemahkan ke skema SkyFire 5.4.8.
+zona itu di client MoP 5.4.8 sama dengan Cataclysm, jadi data spawn diambil dari
+dump world TDB 4.3.4 lalu diterjemahkan ke skema SkyFire 5.4.8.
 
 Kenapa Python, padahal skrip lain di tools/dev PowerShell: masukannya mysqldump
 ~292 MB yang harus dibaca sambil jalan dan dipecah per tuple. PowerShell tidak
 cocok untuk itu.
 
-Yang dihasilkan satu file SQL idempotent untuk sql/pending_updates/world/.
+Yang dihasilkan satu file SQL idempotent per zona untuk sql/pending_updates/world/.
 
 Pemakaian:
 
-    python tools/dev/port_hyjal_spawns.py \
+    python tools/dev/port_zone_spawns.py --zone deepholm \
         --dump path/ke/TDB_full_world_434.sql \
-        --out  sql/pending_updates/world/prabowow_hyjal_zone_spawns.sql
+        --out  sql/pending_updates/world/prabowow_deepholm_zone_spawns.sql \
+        --loot-out sql/pending_updates/world/prabowow_deepholm_loot.sql
+
+`--zone hyjal` mereproduksi file Hyjal yang sudah dipromosikan
+(sql/updates/world/2026_09_08_world_02.sql dan _03.sql); skrip ini dulu bernama
+tools/dev/port_hyjal_spawns.py, nama itulah yang tertulis di header kedua file
+tersebut.
 
 Keputusan yang dibuat skrip ini, semuanya sengaja:
 
 * Semua spawn diratakan ke `phaseid = 0` supaya terlihat oleh semua pemain.
-  Phasing asli Hyjal digerakkan script C++ yang tidak ada di SkyFire, jadi kalau
-  phaseid disalin apa adanya zonanya tetap terlihat kosong. Konsekuensinya versi
-  berbeda dari area yang sama tampil bersamaan.
+  Phasing asli zona Cataclysm digerakkan script C++ yang tidak ada di SkyFire,
+  jadi kalau phaseid disalin apa adanya zonanya tetap terlihat kosong.
+  Konsekuensinya versi berbeda dari area yang sama tampil bersamaan.
 * Karena itu spawn di-dedupe: entry yang sama pada posisi yang sama (dibulatkan
-  DEDUPE_YARDS yard) hanya diambil satu, dan baris fase dasar (169) menang.
+  DEDUPE_YARDS yard) hanya diambil satu, dan baris fase dasar (169 di semua zona
+  Cataclysm) yang menang.
+* Hanya map utama zona yang diambil. Beberapa baris di dump membawa zoneId zona
+  luar tapi berdiri di map instance (Grim Batol, Battle for Mount Hyjal); baris
+  itu dibuang supaya port tidak menyuntik spawn ke dalam dungeon.
 * `MovementType = 2` (waypoint) diturunkan ke 0 karena `waypoint_data` tidak
   ikut diport; NPC-nya diam, bukan berjalan ke path yang tidak ada.
 * `AIName` dan `ScriptName` dikosongkan pada template hasil port: SkyFire tidak
@@ -37,6 +47,10 @@ Keputusan yang dibuat skrip ini, semuanya sengaja:
   adanya lewat Creature::SelectLevel. Jadi kolom itu diisi 0 dulu, lalu satu
   UPDATE di akhir file mengambil rata-rata dari template yang sudah ada di DB
   pada minlevel dan rank yang sama.
+
+`quest_template` tidak pernah diport: quest Cataclysm sudah ada di dump dasar
+SFDB, yang hilang cuma spawn-nya. Tabel 4.3.4 itu hanya dibaca untuk tahu quest
+mana milik zona ini, supaya tautan quest giver bisa disaring.
 """
 
 from __future__ import annotations
@@ -45,21 +59,77 @@ import argparse
 import re
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
-ZONE_HYJAL = 616
-BASE_PHASE = 169
 DEDUPE_YARDS = 3.0
 # Radius yang dipakai SQL untuk membuang baris hasil port yang bentrok dengan
 # spawn yang sudah lebih dulu ada di DB.
 EXISTING_SPAWN_YARDS = 10.0
 
-CREATURE_GUID_FIRST = 8400001
-CREATURE_GUID_LAST = 8404000
-GAMEOBJECT_GUID_FIRST = 8400001
-GAMEOBJECT_GUID_LAST = 8401000
-
 ROWS_PER_INSERT = 500
+
+
+@dataclass(frozen=True)
+class Zone:
+    """Satu zona yang bisa diport, beserta blok guid yang dicadangkan untuknya.
+
+    `ids` adalah nilai `creature.zoneId` di dump 4.3.4 dan sekaligus
+    `quest_template.QuestSortID` untuk quest zona itu. Vashj'ir butuh empat id
+    karena dump memecahnya per sub-zona; menyaring 5146 saja hanya memberi 7%
+    isinya.
+
+    `map` mengunci port ke map utama zona. Tanpa itu ikut terbawa segelintir
+    baris yang zoneId-nya zona luar tapi berdiri di map instance.
+
+    Blok guid dipilih di rentang 84xxxxx, di atas 8300000/8310002 milik
+    mod-prabowow dan 8400000 milik Emissary Windsong. Ukurannya dilebihkan dari
+    jumlah spawn mentah di dump supaya masih muat kalau dedupe berubah.
+    """
+
+    slug: str
+    label: str
+    ids: frozenset
+    map: str
+    base_phase: str
+    creature_guid_first: int
+    creature_guid_last: int
+    gameobject_guid_first: int
+    gameobject_guid_last: int
+
+    @property
+    def id_list(self) -> str:
+        return ", ".join(sorted(self.ids, key=int))
+
+
+ZONES = {
+    "hyjal": Zone(
+        slug="hyjal", label="Mount Hyjal", ids=frozenset({"616"}), map="1",
+        base_phase="169",
+        creature_guid_first=8400001, creature_guid_last=8404000,
+        gameobject_guid_first=8400001, gameobject_guid_last=8401000),
+    "deepholm": Zone(
+        slug="deepholm", label="Deepholm", ids=frozenset({"5042"}), map="646",
+        base_phase="169",
+        creature_guid_first=8410001, creature_guid_last=8419999,
+        gameobject_guid_first=8410001, gameobject_guid_last=8412999),
+    "uldum": Zone(
+        slug="uldum", label="Uldum", ids=frozenset({"5034"}), map="1",
+        base_phase="169",
+        creature_guid_first=8420001, creature_guid_last=8429999,
+        gameobject_guid_first=8420001, gameobject_guid_last=8422999),
+    "twilight-highlands": Zone(
+        slug="twilight_highlands", label="Twilight Highlands",
+        ids=frozenset({"4922"}), map="0", base_phase="169",
+        creature_guid_first=8430001, creature_guid_last=8439999,
+        gameobject_guid_first=8430001, gameobject_guid_last=8434999),
+    "vashjir": Zone(
+        slug="vashjir", label="Vashj'ir",
+        ids=frozenset({"4815", "5144", "5145", "5146"}), map="0",
+        base_phase="169",
+        creature_guid_first=8440001, creature_guid_last=8449999,
+        gameobject_guid_first=8440001, gameobject_guid_last=8442999),
+}
 
 CREATE_RE = re.compile(rb"^CREATE TABLE `([A-Za-z_0-9]+)`")
 INSERT_RE = re.compile(rb"^INSERT INTO `([A-Za-z_0-9]+)`")
@@ -387,19 +457,24 @@ def dedupe_key(source: dict) -> tuple:
     return tuple(keys)
 
 
-def collect(dump: Path):
-    """Lewat satu: spawn zona 616. Lewat dua: template dan tabel pendukungnya."""
+def collect(dump: Path, zone: Zone):
+    """Lewat satu: spawn zona ini. Lewat dua: template dan tabel pendukungnya."""
     creatures: dict[tuple, dict] = {}
     gameobjects: dict[tuple, dict] = {}
 
     for table, row in scan(dump, {"creature", "gameobject"}):
-        if row.get("zoneId") != str(ZONE_HYJAL):
+        if row.get("zoneId") not in zone.ids:
+            continue
+        # Baris dengan zoneId zona ini tapi map lain berdiri di dalam instance
+        # (Grim Batol di Twilight Highlands, Battle for Mount Hyjal di Hyjal).
+        # Isi dungeon bukan urusan port zona luar.
+        if row.get("map") != zone.map:
             continue
         target = creatures if table == "creature" else gameobjects
         key = dedupe_key(row)
         existing = target.get(key)
-        if existing is None or (row.get("PhaseId") == str(BASE_PHASE)
-                                and existing.get("PhaseId") != str(BASE_PHASE)):
+        if existing is None or (row.get("PhaseId") == zone.base_phase
+                                and existing.get("PhaseId") != zone.base_phase):
             target[key] = row
 
     creature_entries = {row["id"] for row in creatures.values()}
@@ -437,7 +512,7 @@ def collect(dump: Path):
             # "pilih acak dari tabel ini", dan kalau tabelnya kosong core menulis
             # error lalu melucuti senjata NPC-nya.
             equipment.append(row)
-        elif table == "quest_template" and row["QuestSortID"] == str(ZONE_HYJAL):
+        elif table == "quest_template" and row["QuestSortID"] in zone.ids:
             # 4.3.4 menamainya QuestSortID; di SkyFire kolom yang sama bernama
             # ZoneOrSort. Nilainya sama: id zona untuk quest yang terikat zona.
             quest_ids.add(row["ID"])
@@ -483,26 +558,31 @@ def collect(dump: Path):
     }
 
 
-HEADER = """-- Mount Hyjal: isi zona 616 yang tidak ada di dump SFDB.
+HEADER = """-- {label}: isi zona {zone_ids} yang tidak ada di dump SFDB.
 --
 -- Latar belakang
---   Rantai quest Hyjal buntu bukan karena bug core, tapi karena world DB kita
+--   Rantai quest {label} buntu bukan karena bug core, tapi karena world DB kita
 --   berasal dari dump SFDB yang tidak punya satu pun spawn di zona itu. Pemain
---   yang sampai ke Nordrassil menemukan zona kosong. File ini mengisinya
---   dengan data spawn dari dump world TrinityCore 4.3.4, diterjemahkan ke
---   skema SkyFire 5.4.8. Konten Hyjal di client 5.4.8 sama dengan Cataclysm,
---   jadi entry, koordinat dan quest-nya cocok.
+--   yang sampai ke sana menemukan zona kosong. File ini mengisinya dengan data
+--   spawn dari dump world TrinityCore 4.3.4, diterjemahkan ke skema SkyFire
+--   5.4.8. Konten Cataclysm di client 5.4.8 tidak berubah, jadi entry,
+--   koordinat dan quest-nya cocok.
 --
--- Dibuat oleh tools/dev/port_hyjal_spawns.py -- jangan diedit tangan, ubah
--- skripnya lalu bangkitkan ulang.
+--   Quest-nya sendiri tidak ikut diport: `quest_template` Cataclysm sudah ada
+--   di dump dasar SFDB. Yang hilang cuma spawn dan tautan quest giver-nya.
+--
+-- Dibuat oleh tools/dev/port_zone_spawns.py --zone {slug} -- jangan diedit
+-- tangan, ubah skripnya lalu bangkitkan ulang.
 --
 -- Keputusan yang perlu diketahui saat membaca file ini
 --   * Semua spawn dipasang di `phaseid` 0 supaya terlihat semua pemain. Phasing
---     asli Hyjal digerakkan script C++ yang tidak ada di SkyFire; kalau phaseid
---     disalin apa adanya, zonanya tetap kosong di mata pemain. Harganya: versi
---     berbeda dari area yang sama tampil bersamaan.
+--     asli zona ini digerakkan script C++ yang tidak ada di SkyFire; kalau
+--     phaseid disalin apa adanya, zonanya tetap kosong di mata pemain.
+--     Harganya: versi berbeda dari area yang sama tampil bersamaan.
 --   * Karena itu spawn di-dedupe pada radius {dedupe} yard per entry, dan baris
 --     fase dasar ({base_phase}) yang dimenangkan.
+--   * Hanya map {map} yang diambil. Baris ber-zoneId zona ini yang berdiri di
+--     map instance dibuang, supaya port tidak menyuntik spawn ke dungeon.
 --   * Template hanya diisi untuk entry yang belum ada (INSERT IGNORE). Baris
 --     SFDB yang sudah benar tidak pernah ditimpa.
 --   * `AIName` dan `ScriptName` dikosongkan pada template hasil port: baris
@@ -516,31 +596,34 @@ HEADER = """-- Mount Hyjal: isi zona 616 yang tidak ada di dump SFDB.
 """
 
 
-def generate(data: dict, out_path: Path, dump_name: str):
+def generate(data: dict, out_path: Path, dump_name: str, zone: Zone):
+    new_templates = "prabowow_%s_new_templates" % zone.slug
+    dmg_ref = "prabowow_%s_dmg_ref" % zone.slug
     creatures = sorted(data["creatures"], key=lambda row: (int(row["id"]), row["guid"]))
     gameobjects = sorted(data["gameobjects"], key=lambda row: (int(row["id"]), row["guid"]))
 
-    if len(creatures) > CREATURE_GUID_LAST - CREATURE_GUID_FIRST + 1:
+    if len(creatures) > zone.creature_guid_last - zone.creature_guid_first + 1:
         raise SystemExit("creature spawn (%d) melebihi rentang guid yang dicadangkan" % len(creatures))
-    if len(gameobjects) > GAMEOBJECT_GUID_LAST - GAMEOBJECT_GUID_FIRST + 1:
+    if len(gameobjects) > zone.gameobject_guid_last - zone.gameobject_guid_first + 1:
         raise SystemExit("gameobject spawn (%d) melebihi rentang guid yang dicadangkan" % len(gameobjects))
 
     template_entries = sorted(data["templates"], key=int)
 
     with out_path.open("w", encoding="utf8", newline="\n") as out:
         out.write(HEADER.format(
-            dedupe=DEDUPE_YARDS, base_phase=BASE_PHASE,
-            cre_first=CREATURE_GUID_FIRST, cre_last=CREATURE_GUID_LAST,
-            go_first=GAMEOBJECT_GUID_FIRST, go_last=GAMEOBJECT_GUID_LAST,
+            label=zone.label, slug=zone.slug, zone_ids=zone.id_list, map=zone.map,
+            dedupe=DEDUPE_YARDS, base_phase=zone.base_phase,
+            cre_first=zone.creature_guid_first, cre_last=zone.creature_guid_last,
+            go_first=zone.gameobject_guid_first, go_last=zone.gameobject_guid_last,
         ))
         out.write("--\n-- Sumber: %s\n" % dump_name)
         out.write("-- Isi: %d creature, %d gameobject, %d creature_template, %d gameobject_template.\n\n"
                   % (len(creatures), len(gameobjects), len(template_entries), len(data["go_templates"])))
 
         out.write("DELETE FROM `creature` WHERE `guid` BETWEEN %d AND %d;\n"
-                  % (CREATURE_GUID_FIRST, CREATURE_GUID_LAST))
+                  % (zone.creature_guid_first, zone.creature_guid_last))
         out.write("DELETE FROM `gameobject` WHERE `guid` BETWEEN %d AND %d;\n\n"
-                  % (GAMEOBJECT_GUID_FIRST, GAMEOBJECT_GUID_LAST))
+                  % (zone.gameobject_guid_first, zone.gameobject_guid_last))
 
         out.write("-- ---------------------------------------------------------------------------\n")
         out.write("-- Template yang belum ada di SFDB\n")
@@ -550,12 +633,12 @@ def generate(data: dict, out_path: Path, dump_name: str):
                   "-- bawah menutup bedanya. Backfill damage nanti hanya boleh menyentuh entry\n"
                   "-- di daftar ini, jangan sampai baris SFDB yang kebetulan bermindmg 0 ikut\n"
                   "-- tertimpa.\n")
-        out.write("DROP TABLE IF EXISTS `prabowow_hyjal_new_templates`;\n")
-        out.write("CREATE TABLE `prabowow_hyjal_new_templates` (`entry` INT UNSIGNED NOT NULL PRIMARY KEY);\n")
-        write_insert(out, "prabowow_hyjal_new_templates", ["entry"],
+        out.write("DROP TABLE IF EXISTS `%s`;\n" % new_templates)
+        out.write("CREATE TABLE `%s` (`entry` INT UNSIGNED NOT NULL PRIMARY KEY);\n" % new_templates)
+        write_insert(out, new_templates, ["entry"],
                      [[entry] for entry in template_entries])
-        out.write("DELETE FROM `prabowow_hyjal_new_templates`\n"
-                  "WHERE `entry` IN (SELECT `entry` FROM `creature_template`);\n\n")
+        out.write("DELETE FROM `%s`\n"
+                  "WHERE `entry` IN (SELECT `entry` FROM `creature_template`);\n\n" % new_templates)
 
         write_insert(out, "creature_template", CREATURE_TEMPLATE_COLUMNS,
                      [creature_template_row(data["templates"][entry]) for entry in template_entries],
@@ -569,35 +652,36 @@ def generate(data: dict, out_path: Path, dump_name: str):
         # Tabel bantu ini sengaja BUKAN TEMPORARY: MySQL melarang satu query
         # menyebut tabel temporary lebih dari sekali, dan UPDATE cadangan di
         # bawah menyebutnya di dalam subquery. Dihapus lagi di akhir blok.
-        out.write("DROP TABLE IF EXISTS `prabowow_hyjal_dmg_ref`;\n")
-        out.write("CREATE TABLE `prabowow_hyjal_dmg_ref` AS\n"
+        out.write("DROP TABLE IF EXISTS `%s`;\n" % dmg_ref)
+        out.write("CREATE TABLE `%s` AS\n"
                   "    SELECT `minlevel`, `npc_rank`, AVG(`mindmg`) AS `mindmg`,\n"
                   "           AVG(`maxdmg`) AS `maxdmg`, AVG(`attackpower`) AS `attackpower`\n"
                   "    FROM `creature_template`\n"
                   "    WHERE `mindmg` > 0\n"
-                  "      AND `entry` NOT IN (SELECT `entry` FROM `prabowow_hyjal_new_templates`)\n"
-                  "    GROUP BY `minlevel`, `npc_rank`;\n\n")
+                  "      AND `entry` NOT IN (SELECT `entry` FROM `%s`)\n"
+                  "    GROUP BY `minlevel`, `npc_rank`;\n\n" % (dmg_ref, new_templates))
         out.write("UPDATE `creature_template` `ct`\n"
-                  "JOIN `prabowow_hyjal_new_templates` `new` ON `new`.`entry` = `ct`.`entry`\n"
-                  "JOIN `prabowow_hyjal_dmg_ref` `ref`\n"
+                  "JOIN `%s` `new` ON `new`.`entry` = `ct`.`entry`\n"
+                  "JOIN `%s` `ref`\n"
                   "  ON `ref`.`minlevel` = `ct`.`minlevel` AND `ref`.`npc_rank` = `ct`.`npc_rank`\n"
                   "SET `ct`.`mindmg` = `ref`.`mindmg`,\n"
                   "    `ct`.`maxdmg` = `ref`.`maxdmg`,\n"
-                  "    `ct`.`attackpower` = `ref`.`attackpower`;\n\n")
+                  "    `ct`.`attackpower` = `ref`.`attackpower`;\n\n" % (new_templates, dmg_ref))
         out.write("-- Sisanya (kombinasi level/rank tanpa pembanding persis) memakai level\n"
                   "-- terdekat. Satu UPDATE per kolom karena MySQL cuma boleh menyebut tabel\n"
                   "-- bantu sekali per query, dan mindmg terakhir karena syaratnya membacanya.\n")
         for column in ("attackpower", "maxdmg", "mindmg"):
             out.write("UPDATE `creature_template` `ct`\n"
-                      "JOIN `prabowow_hyjal_new_templates` `new` ON `new`.`entry` = `ct`.`entry`\n"
+                      "JOIN `%s` `new` ON `new`.`entry` = `ct`.`entry`\n"
                       "SET `ct`.`%s` = COALESCE((\n"
-                      "        SELECT `ref`.`%s` FROM `prabowow_hyjal_dmg_ref` `ref`\n"
+                      "        SELECT `ref`.`%s` FROM `%s` `ref`\n"
                       "        ORDER BY ABS(`ref`.`minlevel` - `ct`.`minlevel`),\n"
                       "                 `ref`.`npc_rank` = `ct`.`npc_rank` DESC\n"
                       "        LIMIT 1), 1)\n"
-                      "WHERE `ct`.`%s` = 0;\n\n" % (column, column, column))
-        out.write("DROP TABLE IF EXISTS `prabowow_hyjal_dmg_ref`;\n")
-        out.write("DROP TABLE IF EXISTS `prabowow_hyjal_new_templates`;\n\n")
+                      "WHERE `ct`.`%s` = 0;\n\n"
+                      % (new_templates, column, column, dmg_ref, column))
+        out.write("DROP TABLE IF EXISTS `%s`;\n" % dmg_ref)
+        out.write("DROP TABLE IF EXISTS `%s`;\n\n" % new_templates)
 
         equipment_rows = [[number(row["CreatureID"]), number(row["ID"]),
                            number(row["ItemID1"]), number(row["ItemID2"]), number(row["ItemID3"])]
@@ -618,17 +702,17 @@ def generate(data: dict, out_path: Path, dump_name: str):
         out.write("-- Spawn\n")
         out.write("-- ---------------------------------------------------------------------------\n\n")
         write_insert(out, "creature", CREATURE_COLUMNS,
-                     [creature_row(row, CREATURE_GUID_FIRST + index)
+                     [creature_row(row, zone.creature_guid_first + index)
                       for index, row in enumerate(creatures)])
         write_insert(out, "gameobject", GAMEOBJECT_COLUMNS,
-                     [gameobject_row(row, GAMEOBJECT_GUID_FIRST + index)
+                     [gameobject_row(row, zone.gameobject_guid_first + index)
                       for index, row in enumerate(gameobjects)])
 
         out.write("-- ---------------------------------------------------------------------------\n")
         out.write("-- Buang yang bentrok dengan spawn yang sudah ada\n")
         out.write("--\n")
-        out.write("-- SFDB bukan benar-benar kosong di Hyjal: ada segelintir spawn di sana\n")
-        out.write("-- (149 creature dan 44 gameobject saat file ini dibuat). Baris hasil port\n")
+        out.write("-- SFDB belum tentu benar-benar kosong di zona ini: di Hyjal ternyata ada\n")
+        out.write("-- 149 creature dan 44 gameobject yang lolos. Baris hasil port\n")
         out.write("-- yang berdiri sedekat %d yard dari spawn lama dengan entry yang sama\n" % int(EXISTING_SPAWN_YARDS))
         out.write("-- dibuang, supaya tidak ada NPC atau objek dobel di tempat yang sama.\n")
         out.write("-- ---------------------------------------------------------------------------\n\n")
@@ -640,9 +724,9 @@ def generate(data: dict, out_path: Path, dump_name: str):
                   " AND ABS(`old`.`position_y` - `c`.`position_y`) < %s\n"
                   " AND ABS(`old`.`position_z` - `c`.`position_z`) < %s\n"
                   "WHERE `c`.`guid` BETWEEN %d AND %d;\n\n"
-                  % (CREATURE_GUID_FIRST, CREATURE_GUID_LAST,
+                  % (zone.creature_guid_first, zone.creature_guid_last,
                      EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS,
-                     CREATURE_GUID_FIRST, CREATURE_GUID_LAST))
+                     zone.creature_guid_first, zone.creature_guid_last))
         out.write("DELETE `g` FROM `gameobject` `g`\n"
                   "JOIN `gameobject` `old`\n"
                   "  ON `old`.`id` = `g`.`id` AND `old`.`map` = `g`.`map`\n"
@@ -651,12 +735,12 @@ def generate(data: dict, out_path: Path, dump_name: str):
                   " AND ABS(`old`.`position_y` - `g`.`position_y`) < %s\n"
                   " AND ABS(`old`.`position_z` - `g`.`position_z`) < %s\n"
                   "WHERE `g`.`guid` BETWEEN %d AND %d;\n\n"
-                  % (GAMEOBJECT_GUID_FIRST, GAMEOBJECT_GUID_LAST,
+                  % (zone.gameobject_guid_first, zone.gameobject_guid_last,
                      EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS, EXISTING_SPAWN_YARDS,
-                     GAMEOBJECT_GUID_FIRST, GAMEOBJECT_GUID_LAST))
+                     zone.gameobject_guid_first, zone.gameobject_guid_last))
 
         out.write("-- ---------------------------------------------------------------------------\n")
-        out.write("-- Siapa memberi dan menutup quest zona 616\n")
+        out.write("-- Siapa memberi dan menutup quest zona %s\n" % zone.id_list)
         out.write("-- ---------------------------------------------------------------------------\n\n")
         for table in ("creature_queststarter", "creature_questender",
                       "gameobject_queststarter", "gameobject_questender"):
@@ -665,17 +749,17 @@ def generate(data: dict, out_path: Path, dump_name: str):
                          [[entry, quest] for entry, quest in pairs], ignore=True)
 
 
-LOOT_HEADER = """-- Mount Hyjal: loot table yang tidak ada di dump SFDB.
+LOOT_HEADER = """-- {label}: loot table yang tidak ada di dump SFDB.
 --
 -- Latar belakang
---   Ke-73 loot table creature Hyjal kosong di DB ini, padahal
+--   Loot table creature zona ini kosong di DB ini, padahal
 --   `creature_loot_template` secara keseluruhan sehat (368 ribu baris, 8768
 --   tabel) dan zona MoP tidak punya satu pun lootid yang menggantung. Jadi ini
---   lubang khusus Hyjal: mob-nya tidak menjatuhkan apa pun, uang sekalipun,
---   dan sembilan drop quest tidak pernah keluar.
+--   lubang khusus zona Cataclysm: mob-nya tidak menjatuhkan apa pun, uang
+--   sekalipun, dan drop quest tidak pernah keluar.
 --
--- Dibuat oleh tools/dev/port_hyjal_spawns.py --loot-out -- jangan diedit
--- tangan, ubah skripnya lalu bangkitkan ulang.
+-- Dibuat oleh tools/dev/port_zone_spawns.py --zone {slug} --loot-out --
+-- jangan diedit tangan, ubah skripnya lalu bangkitkan ulang.
 --
 -- Terjemahan skemanya, karena dua sisi tidak sama
 --   4.3.4 memisahkan Reference dan QuestRequired jadi kolom sendiri; SkyFire
@@ -749,50 +833,55 @@ def write_loot_block(out, target: str, rows: list[list[str]], stage: str, pendin
     out.write("DROP TABLE IF EXISTS `%s`;\n\n" % pending)
 
 
-def generate_loot(data: dict, out_path: Path, dump_name: str):
+def generate_loot(data: dict, out_path: Path, dump_name: str, zone: Zone):
     creature_rows = [loot_row(row) for row in data["loot"] if row["IsCurrency"] != "1"]
     reference_rows = [loot_row(row) for row in data["reference_loot"] if row["IsCurrency"] != "1"]
 
     with out_path.open("w", encoding="utf8", newline="\n") as out:
-        out.write(LOOT_HEADER)
+        out.write(LOOT_HEADER.format(label=zone.label, slug=zone.slug))
         out.write("--\n-- Sumber: %s\n" % dump_name)
         out.write("-- Isi: %d baris creature_loot_template, %d baris reference_loot_template.\n\n"
                   % (len(creature_rows), len(reference_rows)))
 
         write_loot_block(out, "reference_loot_template", reference_rows,
-                         "prabowow_hyjal_ref_stage", "prabowow_hyjal_ref_pending")
+                         "prabowow_%s_ref_stage" % zone.slug,
+                         "prabowow_%s_ref_pending" % zone.slug)
         write_loot_block(out, "creature_loot_template", creature_rows,
-                         "prabowow_hyjal_loot_stage", "prabowow_hyjal_loot_pending")
+                         "prabowow_%s_loot_stage" % zone.slug,
+                         "prabowow_%s_loot_pending" % zone.slug)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--zone", required=True, choices=sorted(ZONES),
+                        help="zona yang diport")
     parser.add_argument("--dump", required=True, type=Path,
                         help="dump world TrinityCore 4.3.4 (mysqldump .sql)")
     parser.add_argument("--out", required=True, type=Path,
                         help="file SQL spawn yang dihasilkan")
     parser.add_argument("--loot-out", type=Path,
-                        help="kalau diisi, loot table Hyjal ditulis ke file ini")
+                        help="kalau diisi, loot table zona ini ditulis ke file ini")
     args = parser.parse_args(argv)
 
     if not args.dump.is_file():
         raise SystemExit("dump tidak ditemukan: %s" % args.dump)
 
-    print("membaca %s ..." % args.dump, file=sys.stderr)
-    data = collect(args.dump)
+    zone = ZONES[args.zone]
+    print("membaca %s untuk %s ..." % (args.dump, zone.label), file=sys.stderr)
+    data = collect(args.dump, zone)
     print("creature %d, gameobject %d, template %d/%d"
           % (len(data["creatures"]), len(data["gameobjects"]),
              len(data["templates"]), len(data["go_templates"])), file=sys.stderr)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    generate(data, args.out, args.dump.name)
+    generate(data, args.out, args.dump.name, zone)
     print("ditulis: %s" % args.out, file=sys.stderr)
 
     if args.loot_out:
         print("loot %d baris, reference %d baris"
               % (len(data["loot"]), len(data["reference_loot"])), file=sys.stderr)
         args.loot_out.parent.mkdir(parents=True, exist_ok=True)
-        generate_loot(data, args.loot_out, args.dump.name)
+        generate_loot(data, args.loot_out, args.dump.name, zone)
         print("ditulis: %s" % args.loot_out, file=sys.stderr)
 
 
