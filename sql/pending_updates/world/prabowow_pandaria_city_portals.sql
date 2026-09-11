@@ -34,11 +34,11 @@
 --   tujuan apa pun untuk keduanya, jadi efek teleportnya mendarat di
 --   ketiadaan: portalnya berdiri, animasinya jalan, pemainnya tidak pindah.
 --
--- Dan baris spawn-nya sendiri juga cacat, dua kali
---   Terlihat begitu portalnya mulai dipakai: ia tenggelam separuh ke dalam
---   tanah, dan menghadap ke arah yang salah. Keduanya ada di baris spawn 2015
---   yang sama, dan keduanya tidak pernah jadi masalah selama portal itu memang
---   tidak memindahkan siapa pun. Rinciannya, beserta perbaikannya, di bagian 3b.
+-- Dan baris spawn-nya sendiri juga cacat
+--   Terlihat begitu portalnya mulai dipakai: keduanya tenggelam separuh ke
+--   dalam tanah, dan yang di Orgrimmar menghadap ke arah yang salah. Selama
+--   portal itu memang tidak memindahkan siapa pun, tidak ada yang pernah
+--   menyadarinya. Rinciannya, beserta perbaikannya, di bagian 3b.
 --
 -- Perbaikannya
 --   Arahkan `data0` ke dua spell teleport Jade Forest yang tujuannya MEMANG
@@ -92,12 +92,14 @@
 -- Membatalkannya
 --   UPDATE `gameobject_template` SET `data0` = 130703 WHERE `entry` = 215457;
 --   UPDATE `gameobject_template` SET `data0` = 130698 WHERE `entry` = 215424;
---   UPDATE `gameobject` SET `position_z` = `position_z` - 2.0,
---                           `rotation2` = 0, `rotation3` = 1
---   WHERE `id` IN (215424, 215457) AND `rotation3` = 0;
---   DELETE FROM `gameobject` WHERE `guid` BETWEEN 8460001 AND 8460099;
+--   Geometrinya dikembalikan ke angka SFDB secara mutlak, bukan dengan
+--   mengurangi @Z_LIFT -- supaya benar berapa kali pun file ini sempat jalan:
 --
---   Angka 2.0 di atas harus sama dengan @Z_LIFT yang terakhir dipakai.
+--   UPDATE `gameobject` SET `position_z` = 28.62439,
+--          `rotation2` = 0, `rotation3` = 1 WHERE `id` = 215424;
+--   UPDATE `gameobject` SET `position_z` = 117.2901,
+--          `rotation2` = 0, `rotation3` = 1 WHERE `id` = 215457;
+--   DELETE FROM `gameobject` WHERE `guid` BETWEEN 8460001 AND 8460099;
 --
 -- Catatan untuk rilis SFDB berikutnya
 --   Kalau rilis baru menulis ulang baris 215424/215457, `data0` kembali ke
@@ -245,25 +247,62 @@ WHERE NOT EXISTS (
 --
 --   HandleGameObjectMoveCommand memanggil SaveToDB() di akhir, jadi begitu
 --   posisinya pas, angkanya sudah ada di tabel `gameobject`. Baca balik dengan
---   bagian 4 di bawah, lalu tulis selisihnya ke @Z_LIFT supaya DB yang dibangun
---   dari nol nanti ikut benar.
+--   bagian 4 di bawah, kurangi dengan Z tanah, lalu tulis selisihnya ke @Z_LIFT
+--   supaya DB yang dibangun dari nol nanti ikut benar.
 --
--- Kenapa dijaga sidik jari rotation2 = 0 AND rotation3 = 1
---   Itu tanda tangan baris SFDB yang belum pernah disentuh. Sesudah UPDATE ini
---   jalan sekali, rotation3 jadi 0 dan syaratnya tidak akan pernah cocok lagi
---   -- jadi file ini boleh dijalankan berapa kali pun tanpa portalnya naik
---   berlipat. Dan kalau portalnya sudah dipindahkan dengan tangan lewat
---   .gobject move, SaveToDB() menulis ulang rotasinya, sidik jarinya hilang,
---   dan posisi pilihanmu tidak akan ditimpa file ini.
+--   Pada realm ini guid-nya 263127 (Orgrimmar) dan 263128 (Stormwind). Angka
+--   itu milik DB tersebut, bukan tetapan -- ia lahir dari @OGUID milik SFDB dan
+--   bisa berbeda di DB yang dibangun ulang, jadi jangan ditulis ke file ini.
+--
+--   .gobject move TIDAK memperbaiki arah hadap. Ia menyimpan ulang rotasi yang
+--   sedang berlaku, termasuk (0, 1) yang keliru itu. Yang memperbaikinya
+--   .gobject turn, atau UPDATE rotasi di bawah -- dan UPDATE itu memang
+--   dirancang tetap aman dijalankan sesudah portalnya dipindahkan tangan.
+--
+-- Dua UPDATE terpisah, dan penjaganya BUKAN rotasi
+--   Versi pertama bagian ini menjaga keduanya dengan sidik jari
+--   rotation2 = 0 AND rotation3 = 1, dengan anggapan .gobject move akan
+--   menghapus sidik jari itu sehingga posisi yang disetel tangan aman. Anggapan
+--   itu salah: SaveToDB (GameObject.cpp:742-743) menulis rotasi dari
+--   GAMEOBJECT_FIELD_PARENT_ROTATION+2/3, yang saat Create diisi (0, 1) apa
+--   adanya -- jadi .gobject move menyimpannya kembali sebagai (0, 1), sidik
+--   jarinya bertahan, dan file ini akan menaikkan Z sekali lagi DI ATAS posisi
+--   yang sudah benar.
+--
+--   Karena itu keduanya dipisah, dengan penjaga yang cocok untuk masing-masing.
+--
+--   Rotasi: dijaga "belum nol", jadi ia selalu benar dan boleh diulang. Aman
+--   juga sesudah .gobject turn, yang memang sudah memanggil
+--   UpdateRotationFields() tanpa argumen (cs_gobject.cpp:406) sehingga nilainya
+--   sudah diturunkan dari `orientation`; menolkannya cuma membuat core
+--   menghitung ulang angka yang sama.
+--
+--   Tinggi: dijaga nilai Z ASLI milik SFDB, dengan toleransi. Sesudah dinaikkan
+--   sekali, Z-nya tidak lagi cocok dan UPDATE-nya tidak akan pernah jalan lagi.
+--   Dan kalau portalnya sudah dipindahkan dengan tangan, Z-nya juga sudah tidak
+--   cocok, jadi posisi pilihanmu tidak akan ditimpa.
+--
+--   Catatan: dari kedua portal hanya ORGRIMMAR yang benar-benar salah hadap.
+--   Stormwind `orientation`-nya 0, dan (0, 1) memang sin(0/2)=0, cos(0/2)=1 --
+--   nilainya kebetulan sudah benar di sana. Menolkannya tetap dilakukan supaya
+--   kedua baris punya bentuk yang sama dan core yang memegang perhitungannya.
 -- ---------------------------------------------------------------------------
 
 UPDATE `gameobject`
-SET `position_z` = `position_z` + @Z_LIFT,
-    `rotation2`  = 0,
-    `rotation3`  = 0
+SET `rotation2` = 0,
+    `rotation3` = 0
 WHERE `id` IN (@GO_PORTAL_SW, @GO_PORTAL_ORG)
-  AND `rotation2` = 0
-  AND `rotation3` = 1;
+  AND (`rotation2` <> 0 OR `rotation3` <> 0);
+
+UPDATE `gameobject`
+SET `position_z` = `position_z` + @Z_LIFT
+WHERE `id` = @GO_PORTAL_ORG
+  AND ABS(`position_z` - 28.62439) < 0.05;
+
+UPDATE `gameobject`
+SET `position_z` = `position_z` + @Z_LIFT
+WHERE `id` = @GO_PORTAL_SW
+  AND ABS(`position_z` - 117.2901) < 0.05;
 
 -- ---------------------------------------------------------------------------
 -- 4. Laporan, dibaca di keluaran impor
