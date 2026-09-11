@@ -34,6 +34,12 @@
 --   tujuan apa pun untuk keduanya, jadi efek teleportnya mendarat di
 --   ketiadaan: portalnya berdiri, animasinya jalan, pemainnya tidak pindah.
 --
+-- Dan baris spawn-nya sendiri juga cacat, dua kali
+--   Terlihat begitu portalnya mulai dipakai: ia tenggelam separuh ke dalam
+--   tanah, dan menghadap ke arah yang salah. Keduanya ada di baris spawn 2015
+--   yang sama, dan keduanya tidak pernah jadi masalah selama portal itu memang
+--   tidak memindahkan siapa pun. Rinciannya, beserta perbaikannya, di bagian 3b.
+--
 -- Perbaikannya
 --   Arahkan `data0` ke dua spell teleport Jade Forest yang tujuannya MEMANG
 --   sudah ada di DB:
@@ -86,7 +92,12 @@
 -- Membatalkannya
 --   UPDATE `gameobject_template` SET `data0` = 130703 WHERE `entry` = 215457;
 --   UPDATE `gameobject_template` SET `data0` = 130698 WHERE `entry` = 215424;
+--   UPDATE `gameobject` SET `position_z` = `position_z` - 2.0,
+--                           `rotation2` = 0, `rotation3` = 1
+--   WHERE `id` IN (215424, 215457) AND `rotation3` = 0;
 --   DELETE FROM `gameobject` WHERE `guid` BETWEEN 8460001 AND 8460099;
+--
+--   Angka 2.0 di atas harus sama dengan @Z_LIFT yang terakhir dipakai.
 --
 -- Catatan untuk rilis SFDB berikutnya
 --   Kalau rilis baru menulis ulang baris 215424/215457, `data0` kembali ke
@@ -98,6 +109,10 @@ SET @GO_PORTAL_ORG := 215424;     -- 'Portal to Honydew Village', Horde
 
 SET @SPELL_JF_A := 130321;        -- teleport Jade Forest, Alliance
 SET @SPELL_JF_H := 125060;        -- teleport Jade Forest, Horde
+
+-- Tinggi yang ditambahkan ke posisi portal, dalam yard. Lihat bagian 3b --
+-- angka ini PERKIRAAN dan minta dicek di client.
+SET @Z_LIFT := 2.0;
 
 -- 8450001-8450100 dipakai Pandaria Emissary, 8440001-8449999 dicadangkan
 -- Vashj'ir, 84[0-3]xxxx dipakai port zona Cataclysm.
@@ -155,9 +170,15 @@ WHERE `entry` = @GO_PORTAL_ORG
 -- ---------------------------------------------------------------------------
 -- 3. Pastikan portalnya benar-benar berdiri
 --
--- Koordinatnya milik SFDB, bukan karangan: Orgrimmar di Valley of Strength dan
--- Stormwind di dekat Eastern Earthshrine, persis di baris spawn rilis
--- 10_to_11. rotation 0,0,0,1 juga disalin apa adanya dari sana.
+-- Koordinatnya milik SFDB, bukan karangan: persis baris spawn rilis 10_to_11.
+-- Nama landmark-nya sengaja TIDAK ditulis di sini karena belum pernah dicek di
+-- client. Yang bisa dipastikan dari data: keduanya berdiri di enklave Pandaren
+-- yang dipasang file yang sama, sejengkal dari mage portalnya masing-masing --
+-- 66437 'Arcanist Xu' (Horde Mage) ~3.1 yard di Orgrimmar, dan 66449
+-- 'Ang the Wise' (Alliance Mage) ~2.6 yard di Stormwind.
+--
+-- Z-nya sudah ditambah @Z_LIFT dan rotasinya ditulis 0,0,0,0, bukan 0,0,0,1
+-- seperti aslinya. Alasan keduanya ada di bagian 3b.
 --
 -- Syaratnya "belum ada spawn entry ini di peta itu", bukan "belum ada spawn di
 -- blok guid saya". Dengan begitu di DB yang sudah punya spawn SFDB-nya bagian
@@ -171,8 +192,8 @@ INSERT INTO `gameobject`
     (`guid`, `id`, `map`, `position_x`, `position_y`, `position_z`, `orientation`,
      `rotation0`, `rotation1`, `rotation2`, `rotation3`,
      `spawntimesecs`, `animprogress`, `state`, `spawnMask`, `phaseid`, `phasegroup`)
-SELECT @GUID_BASE + 1, @GO_PORTAL_ORG, 1, 2014.819, -4700.274, 28.62439, 5.751331,
-       0, 0, 0, 1, 120, 255, 1, 1, 0, 0
+SELECT @GUID_BASE + 1, @GO_PORTAL_ORG, 1, 2014.819, -4700.274, 28.62439 + @Z_LIFT, 5.751331,
+       0, 0, 0, 0, 120, 255, 1, 1, 0, 0
 FROM DUAL
 WHERE NOT EXISTS (
     SELECT 1 FROM `gameobject` `g` WHERE `g`.`id` = @GO_PORTAL_ORG AND `g`.`map` = 1);
@@ -181,11 +202,68 @@ INSERT INTO `gameobject`
     (`guid`, `id`, `map`, `position_x`, `position_y`, `position_z`, `orientation`,
      `rotation0`, `rotation1`, `rotation2`, `rotation3`,
      `spawntimesecs`, `animprogress`, `state`, `spawnMask`, `phaseid`, `phasegroup`)
-SELECT @GUID_BASE + 2, @GO_PORTAL_SW, 0, -8194.479, 528.1129, 117.2901, 0,
-       0, 0, 0, 1, 120, 255, 1, 1, 0, 0
+SELECT @GUID_BASE + 2, @GO_PORTAL_SW, 0, -8194.479, 528.1129, 117.2901 + @Z_LIFT, 0,
+       0, 0, 0, 0, 120, 255, 1, 1, 0, 0
 FROM DUAL
 WHERE NOT EXISTS (
     SELECT 1 FROM `gameobject` `g` WHERE `g`.`id` = @GO_PORTAL_SW AND `g`.`map` = 0);
+
+-- ---------------------------------------------------------------------------
+-- 3b. Betulkan geometri spawn milik SFDB: tenggelam, dan salah hadap
+--
+-- Dua cacat yang berdiri sendiri, dua-duanya ada di baris spawn rilis
+-- 10_to_11, dan dua-duanya tidak pernah terlihat selama portalnya memang tidak
+-- memindahkan siapa pun.
+--
+--   (1) Tenggelam. GameObject.cpp:179 memanggil Relocate(x, y, z, ang) apa
+--       adanya -- tidak ada penyesuaian ke tinggi tanah di mana pun. Dan Z
+--       portalnya persis setinggi tanah: 28.62439 di Orgrimmar sementara NPC
+--       yang dipasang file yang sama berdiri di 28.42856-28.90924, dan 117.2901
+--       di Stormwind sementara tetangganya di 117.1907-117.9804. Jadi titik
+--       pusat modelnya duduk tepat di permukaan, dan separuh bawahnya masuk
+--       tanah.
+--
+--   (2) Salah hadap. Baris SFDB menyimpan rotation2 = 0, rotation3 = 1.
+--       UpdateRotationFields (GameObject.cpp:2192) baru menurunkan rotasi dari
+--       `orientation` kalau KEDUANYA nol:
+--
+--           if (rotation2 == 0.0f && rotation3 == 0.0f)
+--
+--       rotation3 = 1 membuat syarat itu gagal, jadi (0, 1) dipakai apa adanya
+--       -- dan itu berarti sin(o/2) = 0, cos(o/2) = 1, yaitu orientasi 0.
+--       `orientation` 5.751331 milik portal Orgrimmar tidak pernah terpakai.
+--       Menolkan keduanya menyerahkan perhitungannya ke core, yang akan
+--       memakai `orientation` yang memang sudah benar di baris itu.
+--
+-- @Z_LIFT = 2.0 adalah PERKIRAAN, bukan ukuran
+--   Tinggi pivot model 12658 ada di GameObjectDisplayInfo.dbc dan tidak bisa
+--   dibaca dari SQL. Angka pastinya cuma bisa didapat di client. Caranya, satu
+--   menit, dan hasilnya langsung tersimpan ke DB sendiri:
+--
+--     .gobject near 30            -- cari guid portalnya
+--     .gobject move <guid> <x> <y> <z>
+--
+--   HandleGameObjectMoveCommand memanggil SaveToDB() di akhir, jadi begitu
+--   posisinya pas, angkanya sudah ada di tabel `gameobject`. Baca balik dengan
+--   bagian 4 di bawah, lalu tulis selisihnya ke @Z_LIFT supaya DB yang dibangun
+--   dari nol nanti ikut benar.
+--
+-- Kenapa dijaga sidik jari rotation2 = 0 AND rotation3 = 1
+--   Itu tanda tangan baris SFDB yang belum pernah disentuh. Sesudah UPDATE ini
+--   jalan sekali, rotation3 jadi 0 dan syaratnya tidak akan pernah cocok lagi
+--   -- jadi file ini boleh dijalankan berapa kali pun tanpa portalnya naik
+--   berlipat. Dan kalau portalnya sudah dipindahkan dengan tangan lewat
+--   .gobject move, SaveToDB() menulis ulang rotasinya, sidik jarinya hilang,
+--   dan posisi pilihanmu tidak akan ditimpa file ini.
+-- ---------------------------------------------------------------------------
+
+UPDATE `gameobject`
+SET `position_z` = `position_z` + @Z_LIFT,
+    `rotation2`  = 0,
+    `rotation3`  = 0
+WHERE `id` IN (@GO_PORTAL_SW, @GO_PORTAL_ORG)
+  AND `rotation2` = 0
+  AND `rotation3` = 1;
 
 -- ---------------------------------------------------------------------------
 -- 4. Laporan, dibaca di keluaran impor
@@ -216,3 +294,24 @@ SELECT `p`.`id` AS `spell`,
        `p`.`target_position_z` AS `z`
 FROM `spell_target_position` `p`
 WHERE `p`.`id` IN (@SPELL_JF_A, @SPELL_JF_H);
+
+-- Geometri tiap portal yang berdiri. `rotation3` harus 0 di kedua baris -- itu
+-- yang membuat core menghitung arah hadapnya dari `orientation`. Kalau masih 1,
+-- bagian 3b tidak jalan dan portalnya tetap menghadap timur.
+--
+-- `position_z` inilah angka yang dicocokkan di client. Sesudah dipindahkan
+-- dengan .gobject move, jalankan ulang laporan ini, kurangi dengan Z tanah
+-- (28.62439 di Orgrimmar, 117.2901 di Stormwind), dan selisihnya adalah
+-- @Z_LIFT yang benar.
+SELECT `g`.`guid`,
+       `gt`.`name`,
+       `g`.`map`,
+       `g`.`position_x` AS `x`,
+       `g`.`position_y` AS `y`,
+       `g`.`position_z` AS `z`,
+       `g`.`orientation`,
+       `g`.`rotation2`,
+       `g`.`rotation3`
+FROM `gameobject` `g`
+JOIN `gameobject_template` `gt` ON `gt`.`entry` = `g`.`id`
+WHERE `g`.`id` IN (@GO_PORTAL_SW, @GO_PORTAL_ORG);
