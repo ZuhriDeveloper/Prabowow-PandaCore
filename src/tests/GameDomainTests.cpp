@@ -975,6 +975,36 @@ namespace
         passed &= Expect(!Skyfire::Spells::GetJumpDestOverride(999999),
             "Unknown spell should not resolve a destination jump override");
 
+        Skyfire::Spells::ScriptedDash const* rollDash =
+            Skyfire::Spells::GetScriptedDash(109132);
+        passed &= Expect(rollDash && rollDash->SpellId == 109132,
+            "Movement metadata should resolve the monk Roll scripted dash");
+        passed &= Expect(rollDash &&
+            ExpectNear(rollDash->Distance, 15.0f, 0.001f,
+                "Monk Roll should travel its 15 yard range") &&
+            ExpectNear(rollDash->SpeedXY, 25.0f, 0.001f,
+                "Monk Roll should keep its horizontal speed") &&
+            ExpectNear(rollDash->SpeedZ, 1.0f, 0.001f,
+                "Monk Roll should stay flat instead of leaping"),
+            "Monk Roll scripted dash should preserve its travel values");
+        passed &= Expect(!Skyfire::Spells::GetScriptedDash(999999),
+            "Unknown spell should not resolve a scripted dash");
+        passed &= Expect(!Skyfire::Spells::GetScriptedDash(115008),
+            "Chi Torpedo should stay unlisted until it is confirmed motionless");
+
+        passed &= ExpectNear(Skyfire::Spells::GetScriptedDashRelativeAngle(0), 0.0f, 0.001f,
+            "A standing dash should go straight forward");
+        passed &= ExpectNear(Skyfire::Spells::GetScriptedDashRelativeAngle(0x00000001), 0.0f, 0.001f,
+            "Running forward should dash forward");
+        passed &= ExpectNear(Skyfire::Spells::GetScriptedDashRelativeAngle(0x00000002), 3.14159265f, 0.001f,
+            "Running backward should dash backward");
+        passed &= ExpectNear(Skyfire::Spells::GetScriptedDashRelativeAngle(0x00000004), 1.57079632f, 0.001f,
+            "Strafing left should dash to the left");
+        passed &= ExpectNear(Skyfire::Spells::GetScriptedDashRelativeAngle(0x00000008), -1.57079632f, 0.001f,
+            "Strafing right should dash to the right");
+        passed &= ExpectNear(Skyfire::Spells::GetScriptedDashRelativeAngle(0x00000002 | 0x00000004), 3.14159265f, 0.001f,
+            "Backward should win over strafing so diagonal input does not roll sideways");
+
         Skyfire::Spells::TeleportPostEffect const* everlookEffect =
             Skyfire::Spells::GetTeleportPostEffect(23442);
         passed &= Expect(everlookEffect &&

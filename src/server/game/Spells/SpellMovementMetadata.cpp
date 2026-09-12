@@ -19,6 +19,29 @@ namespace Spells
             { 6544, 0.0f, 48.0f, 16.0f }
         };
 
+        // Monk Roll carries no movement effect this core acts on, so its travel
+        // is driven from the spell script instead. 15 yards is the MoP 5.4.8
+        // range; SpeedZ stays near zero because this is a ground slide, not a
+        // jump.
+        //
+        // Chi Torpedo (115008 / 121828) has the same shape - its script moves
+        // nothing either - but it is deliberately not listed here until it has
+        // been confirmed broken in game. Listing a spell that already travels
+        // would move the caster twice.
+        ScriptedDash const ScriptedDashes[] =
+        {
+            { 109132, 15.0f, 25.0f, 1.0f } // Roll
+        };
+
+        // Mirrors MovementFlags in Entities/Unit/Unit.h:720-726. Copied rather
+        // than included so this file stays free of the entity headers and can be
+        // unit tested on its own.
+        uint32 const DashMovementFlagBackward = 0x00000002;
+        uint32 const DashMovementFlagStrafeLeft = 0x00000004;
+        uint32 const DashMovementFlagStrafeRight = 0x00000008;
+
+        float const DashPi = 3.14159265358979323846f;
+
         struct JumpArrivalSpell
         {
             uint32 SpellId;
@@ -50,6 +73,31 @@ namespace Spells
                 return &jumpDestOverride;
 
         return nullptr;
+    }
+
+    ScriptedDash const* GetScriptedDash(uint32 spellId)
+    {
+        for (ScriptedDash const& scriptedDash : ScriptedDashes)
+            if (scriptedDash.SpellId == spellId)
+                return &scriptedDash;
+
+        return nullptr;
+    }
+
+    float GetScriptedDashRelativeAngle(uint32 movementFlags)
+    {
+        // Holding back beats strafing: that is what the client shows when both
+        // keys are down, and it keeps diagonal input from rolling sideways.
+        if (movementFlags & DashMovementFlagBackward)
+            return DashPi;
+
+        if (movementFlags & DashMovementFlagStrafeLeft)
+            return DashPi / 2.0f;
+
+        if (movementFlags & DashMovementFlagStrafeRight)
+            return -DashPi / 2.0f;
+
+        return 0.0f;
     }
 
     uint32 GetJumpArrivalSpellId(uint32 spellId)

@@ -20,6 +20,16 @@ namespace Spells
         float SpeedZ;
     };
 
+    // Abilities that slide the caster along the ground under script control,
+    // because the DBC effect does not move them at all (monk Roll).
+    struct ScriptedDash
+    {
+        uint32 SpellId;
+        float Distance;
+        float SpeedXY;
+        float SpeedZ;   // small on purpose: a flat arc reads as a slide, not a leap
+    };
+
     enum TeleportPostEffectKind
     {
         TELEPORT_POST_EFFECT_NONE,
@@ -37,6 +47,10 @@ namespace Spells
     };
 
     JumpDestOverride const* GetJumpDestOverride(uint32 spellId);
+    ScriptedDash const* GetScriptedDash(uint32 spellId);
+    // Relative to the caster's own orientation: 0 forward, PI backward,
+    // +PI/2 strafing left, -PI/2 strafing right. Backward wins over strafing.
+    float GetScriptedDashRelativeAngle(uint32 movementFlags);
     // Spell to cast when a JUMP/JUMP_DEST spline finishes (e.g. Heroic Leap -> 52174).
     // Used when SpellEffect.TriggerSpell is 0 in DBC.
     uint32 GetJumpArrivalSpellId(uint32 spellId);

@@ -15,6 +15,7 @@
 #include "Containers.h"
 #include "Group.h"
 #include "MonkSpellCalculations.h"
+#include "SpellMovementMetadata.h"
 
 enum MonkSpells
 {
@@ -497,6 +498,35 @@ public:
                 caster->RemoveAurasByType(SPELL_AURA_MOD_DECREASE_SPEED);
 
             caster->CastSpell(caster, SPELL_MONK_ROLL_TRIGGER, true);
+
+            MoveCaster(caster);
+        }
+
+        // Roll has no movement effect this core acts on, so without this the
+        // cast completes, the aura lands, the animation plays -- and the monk
+        // does not move at all.
+        //
+        // MoveJump, not MoveCharge: MoveCharge (MotionMaster.cpp:395) returns
+        // without a word whenever MOTION_SLOT_CONTROLLED is already taken, which
+        // is exactly how the movement would go missing again. SpeedZ is small
+        // enough that the arc stays flat and reads as a roll rather than a leap.
+        void MoveCaster(Player* caster)
+        {
+            if (caster->IsInFlight())
+                return;
+
+            Skyfire::Spells::ScriptedDash const* dash =
+                Skyfire::Spells::GetScriptedDash(GetSpellInfo()->Id);
+            if (!dash)
+                return;
+
+            // GetFirstCollisionPosition stops the roll at the first wall instead
+            // of pushing the monk through it, the same way EffectChargeDest
+            // (SpellEffectsMovement.cpp:404) places a charge.
+            Position dest;
+            caster->GetFirstCollisionPosition(dest, dash->Distance,
+                Skyfire::Spells::GetScriptedDashRelativeAngle(caster->GetUnitMovementFlags()));
+            caster->GetMotionMaster()->MoveJump(dest, dash->SpeedXY, dash->SpeedZ);
         }
 
         void Register()
